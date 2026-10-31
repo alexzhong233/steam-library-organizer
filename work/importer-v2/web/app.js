@@ -67,6 +67,7 @@ async function loadPrefs() {
     }
     if (s && s.ai_url) document.querySelector('#aiurl').value = s.ai_url;
     if (s && s.model) uiPrefs.model = s.model;
+    if (s && s.api_key) document.querySelector('#aikey').value = s.api_key;
   } catch (e) {}
   let u = document.querySelector('#aiurl');
   if (u)
@@ -80,6 +81,9 @@ async function loadPrefs() {
       uiPrefs.model = m.value;
       savePrefs({ model: uiPrefs.model });
     });
+  let k = document.querySelector('#aikey');
+  if (k)
+    k.addEventListener('change', () => savePrefs({ api_key: k.value.trim() }));
   let all = document.querySelector('#selectAll');
   if (all) all.addEventListener('change', () => toggleSelectAll(all.checked));
 }

@@ -14,7 +14,7 @@ if (html.includes("{{CSS}}") || html.includes("{{JS}}")) {
   console.error("web/index.html 的占位符没有被替换"); process.exit(2);
 }
 
-const server = { theme: "light", ai_url: "https://saved.example.com/v1", model: "saved-model" };
+const server = { theme: "light", ai_url: "https://saved.example.com/v1", model: "saved-model", api_key: "sk-saved-key" };
 
 function makeApi(state) {
   return function fetchStub(url, opts = {}) {
@@ -25,7 +25,7 @@ function makeApi(state) {
     if (url === "/api/ui-settings") {
       if (method === "GET") payload = { ...server };
       else {
-        for (const k of ["theme", "ai_url", "model"]) if (k in body) server[k] = body[k];
+        for (const k of ["theme", "ai_url", "model", "api_key"]) if (k in body) server[k] = body[k];
         payload = { ok: true, settings: { ...server } };
       }
     } else if (url === "/api/state") {
@@ -96,6 +96,12 @@ function stateData() {
   check("AI 浮层存在且默认收起", !!panel && panel.open === false);
   check("工具栏有 ✨ AI 整理 入口", [...doc.querySelectorAll(".toolbar button")].some(b => b.textContent.includes("AI 整理")));
   check("AI 地址已从服务端回填", doc.querySelector("#aiurl").value === "https://saved.example.com/v1");
+  check("API Key 已从服务端回填", doc.querySelector("#aikey").value === "sk-saved-key");
+  const keyEl = doc.querySelector("#aikey");
+  keyEl.value = "sk-new-key";
+  keyEl.dispatchEvent(new window.Event("change"));
+  await new Promise((r) => setTimeout(r, 20));
+  check("API Key 变更已保存到服务端", server.api_key === "sk-new-key");
   window.toggleAI();
   check("toggleAI 后展开", panel.open === true);
   window.toggleAI();

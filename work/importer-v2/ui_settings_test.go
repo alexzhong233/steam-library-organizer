@@ -34,9 +34,26 @@ func TestUISettingsRoundTrip(t *testing.T) {
 		t.Fatalf("部分更新覆盖了未提交字段：%+v", got)
 	}
 
+	// API Key 一并落盘：先存进去，再单独改主题，Key 不能被带丢。
+	key := "sk-test-123456"
+	got, err = mergeUISettings(home, uiSettingsPatch{APIKey: &key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.APIKey != key {
+		t.Fatalf("API Key 应已保存，得到 %q", got.APIKey)
+	}
+	got, err = mergeUISettings(home, uiSettingsPatch{Theme: &light})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.APIKey != key {
+		t.Fatalf("改主题不应影响已存的 API Key：%+v", got)
+	}
+
 	// 重新从磁盘读，确认真的落盘了。
 	reloaded := loadUISettings(home)
-	if reloaded.Theme != "light" || reloaded.AIURL != url {
+	if reloaded.Theme != "light" || reloaded.AIURL != url || reloaded.APIKey != key {
 		t.Fatalf("从磁盘读回不一致：%+v", reloaded)
 	}
 }

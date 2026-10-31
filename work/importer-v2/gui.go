@@ -484,7 +484,7 @@ func runGUI(m Manifest, source, plan string, port int, report string) error {
 	})
 	// 界面偏好（主题、AI 服务地址、默认模型）。放服务端而不是只用
 	// localStorage：桌面版换 WebView 实例或清缓存后不该重新选一遍。
-	// API Key 不在其中——它只存在当前进程内存里。
+	// 主题 / AI 地址 / 模型 / API Key 都落盘到数据目录的 ui-settings.json。
 	mux.HandleFunc("/api/ui-settings", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			uiSettingsMu.Lock()
