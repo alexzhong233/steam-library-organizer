@@ -1,0 +1,24 @@
+# 统一换行符：仓库内存 LF，避免 Windows 检出后脚本带 \r 在 CI 里炸掉
+* text=auto
+
+*.go      text eol=lf
+*.js      text eol=lf
+*.mjs     text eol=lf
+*.py      text eol=lf
+*.sh      text eol=lf
+*.command text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.json    text eol=lf
+*.md      text eol=lf
+
+*.ps1     text eol=crlf
+*.bat     text eol=crlf
+*.cmd     text eol=crlf
+
+*.exe     binary
+*.dmg     binary
+*.zip     binary
+*.png     binary
+*.ico     binary
+*.icns    binary
