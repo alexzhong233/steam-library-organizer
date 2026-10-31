@@ -29,7 +29,7 @@
 └──────────────────────────────────────────────┘
 ```
 
-外壳与核心是两个进程：`desktop-wails` 启动 `core -gui -data-dir <dir>`，从它的 stdout 抓取监听地址，再把 WebView 指向它。所以直接用浏览器打开核心的地址也能用，桌面壳只是个方便的容器。
+桌面版与核心是同一个进程：`-tags desktop` 编译时 `runGUI` 不监听端口，把 `http.Handler` 直接交给窗口，请求不出进程。不带标签编译就是原来的命令行版，监听随机端口并自动打开浏览器。
 
 ## 模块分工
 
@@ -147,41 +147,46 @@ type Manifest struct {
 
 ```bash
 cd work/importer-v2
-CGO_ENABLED=0 go build -mod=vendor -trimpath \
+CGO_ENABLED=0 go build -trimpath \
   -ldflags "-s -w -X main.version=2.3.2" -o core .
 ```
 
 版本号是 `var` 不是 `const`，就是为了这一步注入——保证二进制里 `core -manifest-info` 打的版本号和 Release 标签一致。
 
-桌面壳（Wails v2）：
+桌面版（同一个包，`-tags desktop`）：
 
 ```bash
-python scripts/build_wails_release.py --platform darwin/arm64 --core <编译好的 core>
+cd work/importer-v2
+go build -tags desktop,production -trimpath \
+  -ldflags "-s -w -X main.version=2.3.2" -o SteamCollectionImporter .
 ```
 
-`--core` 只是把 core 复制进 App 的 `Resources/`。**core 就是同一份源码编译出来的**，所以 CI 里直接编译即可，不需要从外部下载二进制。
+打成 `.app` / `dist`（macOS 会补 `Info.plist` 并 ad-hoc 签名）：
 
-### 外壳怎么把核心页面装进 WebView
+```bash
+python scripts/build_desktop.py --platform darwin/arm64 --version 2.3.2 --dmg
+```
 
-外壳自己没有任何界面代码，`desktop-wails` 干三件事：起 core、把 core 的网页反代进系统 WebView、退出时收掉 core。
+### 桌面版为什么只有一个进程
+
+`main.go` 带 `//go:build !desktop`，`desktop.go` 带 `//go:build desktop`——两者是同一个包的两个入口，共享 `gui.go`、`engine.go` 等全部核心代码。区别只在 `runGUI` 的最后一段：
 
 ```go
-AssetServer: &assetserver.Options{Handler: shellHandler{proxy: httputil.NewSingleHostReverseProxy(coreURL)}}
+if desktopServe != nil {      // 桌面构建里由 desktop.go 注入
+    desktopServe(mux)         // 不监听端口，直接把整张路由交给窗口
+    <-desktopDone
+    return nil
+}
+ln, _ := net.Listen("tcp", "127.0.0.1:0")   // 命令行构建走这里
 ```
 
-三处必须注意，否则在壳里一定是白屏或 403：
+所以桌面版没有子进程、没有 `Resources/` 里的第二个二进制、没有对外端口；窗口关掉进程就结束。命令行版行为完全没变（随机端口 + 自动开浏览器）。
 
-| 位置 | 现象 | 处理 |
-|---|---|---|
-| `Origin` 头 | WebView 发的是 `http://wails.localhost`，核心 `guiGuard` 只认自己 → 每个 POST 403 | 反代时统一改写成 `http://<核心 Host>` |
-| 首页路径 | Wails 对 `/` 和 `*/index.html` 会截下响应体做 HTML 重排并注入 `/wails/runtime.js` | 首页挂 `/ui`，`/` 302 过去 |
-| `window.open` | WebView2 与 WKWebView 都不支持开新窗（wails 两平台都没接 `NewWindowRequested`） | 首页注入 `window.__desktopShell=true`，审核窗口改用内嵌浮层 |
+只有一处必须绕开：Wails 的 AssetServer 对 `/` 和 `*/index.html` 会截下响应体做 HTML 重排并注入 `/wails/runtime.js`，而首页是一整页内嵌 SPA，不该过这层解析器。所以 `shellRouter` 把 `/` 302 到 `/ui`，`/ui` 再还原成 `/` 交给核心。
 
-核心起不来时外壳不 panic，而是渲染一张可读的失败页（含手动命令行）。
+另一处桌面专属行为：`desktopShell = true` 时首页多注入一行 `window.__desktopShell=true`，前端据此把审核窗口改成同源内嵌浮层——WebView2 与 WKWebView 都不支持 `window.open` 开新窗。浏览器里没有这个标记，行为与以前完全一致。
 
-`desktop-wails/main_test.go` 用假核心把上面三条都钉住了，CI 的 `desktop` job 会跑。
-
-核心侧的配合项：`-browser=false` 让核心不要额外弹一个浏览器标签页（默认仍为 `true`，命令行直跑时行为不变）。
+`desktop_test.go` 把上面这些钉住了（`/` 重定向、`/ui` 还原、API 透传、标记注入、失败页转义）；CI 的 `desktop` job 会跑，并断言产物目录里只有一个文件。
 
 ## 测试
 

@@ -28,14 +28,13 @@ __pycache__/
 # scripts/ 只公开发布脚本，个人方案生成与抓取脚本留在本地
 /scripts/*
 !/scripts/build_release.py
-!/scripts/build_wails_release.py
+!/scripts/build_desktop.py
 
 # 本地二进制与打包产物
 *.exe
 *.dmg
 *.app/
 /dist/
-/desktop-wails/build/
 
 # 本地 Go 构建缓存（沙箱里默认的 %LOCALAPPDATA%\go-build 可能没有写权限）
 /.gocache/

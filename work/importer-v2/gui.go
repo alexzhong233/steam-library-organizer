@@ -105,6 +105,29 @@ func runSelfTest() error {
 // 因为它自己开窗口加载同一个地址。
 var openBrowserOnStart = true
 
+// 桌面构建（-tags desktop）由 desktop.go 链接进来：
+//   - desktopServe 非 nil 时不再监听本地端口，而是把整个 mux 交出去，
+//     由系统 WebView 直接调用——一个进程、一个二进制，没有子进程也没有端口；
+//   - desktopShell 让首页多注入一行标记，前端据此把「审核草稿」改成内嵌浮层
+//     （WebView2 与 WKWebView 都不支持 window.open 开新窗）；
+//   - desktopDone 在窗口关闭时关闭，让 runGUI 正常收尾。
+var (
+	desktopServe func(http.Handler)
+	desktopDone  chan struct{}
+	desktopQuit  func()
+	desktopShell bool
+)
+
+const desktopFlag = `<script>window.__desktopShell=true</script>`
+
+// guiPage 返回首页 HTML。桌面模式下补一行标记，浏览器模式完全不变。
+func guiPage() string {
+	if !desktopShell {
+		return guiHTML
+	}
+	return strings.Replace(guiHTML, "</head>", desktopFlag+"</head>", 1)
+}
+
 func runGUI(m Manifest, source, plan string, port int, report string) error {
 	root, _ := steamRoot()
 	if report == "" {
@@ -130,7 +153,7 @@ func runGUI(m Manifest, source, plan string, port int, report string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		io.WriteString(w, guiHTML)
+		io.WriteString(w, guiPage())
 	})
 	mux.HandleFunc("/review", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -310,6 +333,11 @@ func runGUI(m Manifest, source, plan string, port int, report string) error {
 	})
 	mux.HandleFunc("/api/quit", func(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, map[string]any{"ok": true, "error": "工具已退出"})
+		if desktopQuit != nil {
+			// 桌面模式没有监听端口，server 是 nil；关窗口就是退出。
+			go desktopQuit()
+			return
+		}
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
@@ -570,6 +598,22 @@ func runGUI(m Manifest, source, plan string, port int, report string) error {
 		}
 		jsonResponse(w, map[string]any{"ok": true, "response": data})
 	})
+	// 桌面模式：不监听端口，把整张路由交给窗口进程内的 WebView。
+	// 请求根本不出进程，所以 guiGuard 那层 Host/Origin 校验也就没必要了。
+	if desktopServe != nil {
+		go func() {
+			st.mu.Lock()
+			if st.eval == nil {
+				_ = st.reconnect()
+			}
+			st.mu.Unlock()
+		}()
+		desktopServe(mux)
+		if desktopDone != nil {
+			<-desktopDone
+		}
+		return nil
+	}
 	ln, e := net.Listen("tcp", "127.0.0.1:0")
 	if e != nil {
 		return e

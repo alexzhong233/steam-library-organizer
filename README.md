@@ -8,7 +8,7 @@
 
 ## 源码
 
-完整 Go 源码位于 [`work/importer-v2`](work/importer-v2)，当前版本 `2.3.2`，包含 Steam CEF 桥接、内嵌中文网页界面、审核窗口、分类引擎、免费游戏移除、价格缓存和测试，依赖随 `vendor/` 提供。`desktop-wails/` 是 Wails 桌面外壳，`mac_wrapper.go` 是 macOS ARM64 启动器和主题代理。
+完整 Go 源码位于 [`work/importer-v2`](work/importer-v2)，当前版本 `2.3.2`，包含 Steam CEF 桥接、内嵌中文网页界面、审核窗口、分类引擎、免费游戏移除、价格缓存和测试，依赖由 `go.mod` 声明。同一份代码两种产物：不带标签是命令行版，`-tags desktop` 是桌面单文件。
 
 **想弄清楚代码怎么跑起来的，看 [`ARCHITECTURE.md`](ARCHITECTURE.md)**：三层结构、读写两条数据流、为什么写入前要重读快照做指纹比对、为什么动态收藏只读。
 
@@ -28,69 +28,57 @@
 要求 Go 1.23 或更高版本。在 `work/importer-v2` 目录运行：
 
 ```sh
-go test -mod=vendor ./...
-GOOS=windows GOARCH=amd64 go build -mod=vendor -o SteamCollectionImporter.exe .
-GOOS=windows GOARCH=arm64 go build -mod=vendor -o SteamCollectionImporter-arm64.exe .
-GOOS=darwin GOARCH=arm64 go build -mod=vendor -o SteamCollectionImporter .
+# 核心（命令行）测试；桌面入口的单测单独跑
+go test ./...
+go test -tags desktop,production ./...
+
+# 命令行版交叉编译，不需要 cgo
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o SteamCollectionImporterCore.exe .
+CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -o SteamCollectionImporterCore .
 ```
 
 仓库中的 `classification.example.json` 只是用于离线测试的五条示例数据。不要把真实 Steam 库导出文件或 API Key 提交到 Git。
 
-## 从源码构建 GUI 核心
+## 从源码构建
 
-桌面外壳本身只有窗口和 WebView，真正的界面与 Steam 操作都在 `SteamCollectionImporterCore` 里。核心可以直接从本仓库构建，三个平台都能交叉编译，无需 cgo：
+桌面版和命令行版是**同一份代码**，靠构建标签区分：
 
 ```sh
 cd work/importer-v2
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -mod=vendor -o SteamCollectionImporterCore.exe .
-CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -mod=vendor -o SteamCollectionImporterCore-arm64.exe .
-CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -mod=vendor -o SteamCollectionImporterCore .
+
+# 桌面版：Windows 得到单个 exe，macOS 得到 .app（里面只有一个可执行文件）
+go build -tags desktop,production -trimpath \
+  -ldflags "-s -w -X main.version=2.3.3" -o SteamCollectionImporter .
+
+# 命令行版：不依赖 cgo，任何平台都能交叉编译
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o SteamCollectionImporterCore.exe .
 ```
 
-产物约 10 MB（加 `-ldflags "-s -w"`）或 14–15 MB（不裁剪）。`SteamCollectionImporter` 这个名字留给外壳，核心统一叫 `SteamCollectionImporterCore`，`scripts/build_wails_release.py` 和发布工作流都按这个名字找。
+桌面版约 12–13 MB，**没有第二个二进制**：`gui.go` 在 `-tags desktop` 下不监听端口，直接把 `http.Handler` 交给 Wails 的 AssetServer，窗口与核心在同一个进程里。命令行版仍然监听 `127.0.0.1` 的随机端口并自动打开浏览器，行为没变。
 
-版本号用 `-X main.version=` 注入，例如 `-ldflags "-s -w -X main.version=2.3.3"`；不注入时用源码里写的默认值。
-
-## macOS ARM64 自动发布
-
-在 macOS 上，推荐直接运行：
+打包（macOS 会补 `Info.plist` 并做 ad-hoc 签名）：
 
 ```sh
-python3 scripts/build_release.py
+python scripts/build_desktop.py --platform windows/amd64 --version 2.3.3
+python scripts/build_desktop.py --platform darwin/arm64  --version 2.3.3 --dmg
 ```
 
-也可以双击项目根目录的 `build-release.command`。脚本会运行测试、编译 ARM64 启动器、生成带时间戳的 `.app` 和 `.dmg`，不会覆盖旧版本。
+版本号用 `-X main.version=` 注入；不注入时用 `shared.go` 里的默认值。
 
-如果需要构建后直接安装到应用程序目录：
+### 为什么不再有「外壳 + Resources 里的 core」
 
-```sh
-python3 scripts/build_release.py --install
-```
+旧方案是两个二进制：外壳启动 core 子进程、解析它打印的 `GUI: http://127.0.0.1:PORT/`，再用反向代理把页面搬进 WebView。问题不只是「产物有两个文件」——WebView2 与 WKWebView 都不支持 `window.open`，审核窗口要靠注入标记改成浮层，反代还得改写 `Origin` 才能骗过 core 的同源校验。
 
-脚本需要一份已经构建好的 GUI 核心。默认优先使用 `/Applications/SteamCollectionImporter.app` 里的核心；也可以先按上一节从源码构建，再用路径指定：
+| 旧方案 | 现在 |
+|---|---|
+| 外壳 exe + `Resources/SteamCollectionImporterCore` | 一个 exe / 一个 .app |
+| 子进程 + 解析 stdout 等端口 | 同进程直接调用 handler |
+| 反代改写 Origin 绕开同源校验 | 请求不出进程，无需校验 |
+| macOS 上 `wails://` 嵌 `http://` 是混合内容 | 页面就是 WebView 自己的响应 |
 
-```sh
-python3 scripts/build_release.py --gui-core /path/to/SteamCollectionImporterCore
-```
+唯一保留的约定是首页路径：Wails 的 AssetServer 对 `/` 会截下响应体做 HTML 重排并注入 `runtime.js`，所以 `/` 302 到 `/ui`、`/ui` 再还原成 `/`。这条有单测盯住（`desktop_test.go`）。
 
-## Wails 系统 WebView 桌面版
-
-`desktop-wails` 是新的桌面窗口外壳。它把现有 GUI 放入系统 WebView：macOS 使用 WKWebView，Windows 使用 WebView2，因此不会再自动打开外部浏览器。Wails 外壳启动随 App 携带的 `SteamCollectionImporterCore`，现有页面和 Steam 操作逻辑保持不变。
-
-开发构建需要 Wails v2.10+：
-
-```sh
-cd desktop-wails
-wails build
-```
-
-构建 App 时，把 `SteamCollectionImporterCore` 放到 App 的 `Resources` 目录；也可以用环境变量 `STEAM_COLLECTION_CORE` 指定核心路径。核心可以从本仓库源码构建（见上文），Windows 发行版需要对应架构的核心二进制；没有核心时程序会显示明确的启动错误，不会打开空白窗口。
-
-macOS 本机可以直接双击根目录的 `build-wails.command`，或运行：
-
-```sh
-python3 scripts/build_wails_release.py --platform darwin/arm64 --install
-```
+首次运行会在 `~/.steam-collection-organizer/` 建数据目录（备份、历史、导出都在这里），不写程序所在目录——单文件分发时程序可能位于 `/Applications` 或只读路径。
 
 ## GitHub Actions 自动发布
 
@@ -101,11 +89,11 @@ python3 scripts/build_wails_release.py --platform darwin/arm64 --install
 | Windows x64 | `SteamCollectionImporter-windows-x64.zip` |
 | macOS Apple Silicon | `SteamCollectionImporter-macOS-arm64.dmg` / `.zip` |
 
-**不需要配置任何 Secret 或变量。** 图形核心就是 `work/importer-v2` 编译出来的，工作流在各自平台的 runner 上直接编译（`CGO_ENABLED=0`），再交给 `scripts/build_wails_release.py` 打进 App 的 `Resources/`。这样核心与外壳永远同源同版本，不会出现「外壳 2.3.2 + 核心 1.0.0」的错配。
+**不需要配置任何 Secret 或变量。** 工作流在各自平台的 runner 上直接编译：Windows 用 `scripts/build_desktop.py` 出一个 exe，macOS 出 `.app` 并补 `Info.plist` + ad-hoc 签名。产物只有一份二进制，不存在「外壳与核心版本错配」这种问题。
 
-外壳没有自己的界面代码，是把核心的网页用反向代理装进系统 WebView；核心与外壳之间的三条硬约定（Origin 改写、首页走 `/ui`、审核窗口用内嵌浮层替代 `window.open`）记在 [`ARCHITECTURE.md`](ARCHITECTURE.md) 里，`desktop-wails/main_test.go` 有对应单测。
+桌面版没有独立的外壳代码：`desktop.go`（`-tags desktop`）和命令行入口在同一个包里，窗口直接拿到核心的 `http.Handler`。唯一的约定是首页路径（`/` → `/ui`），原因和单测见上一节。
 
-版本号由工作流注入 `-ldflags "-X main.version=<tag去v>"`，所以发布出来的二进制里 `SteamCollectionImporterCore -manifest-info` 显示的版本与 Release 标签一致。
+版本号由工作流注入 `-ldflags "-X main.version=<tag去v>"`，所以发布出来的二进制里 `-manifest-info` 显示的版本与 Release 标签一致。
 
 发版只有一条路：打 `v*` 标签推上去。
 
@@ -158,7 +146,7 @@ xattr -dr com.apple.quarantine /Applications/SteamCollectionImporter.app
 
 ## WorkBuddy 接手
 
-本项目可以直接交给 WorkBuddy 继续开发。建议先读 [`ARCHITECTURE.md`](ARCHITECTURE.md) 了解三层结构和读写数据流，再看 `desktop-wails/main.go`（外壳如何拉起核心并接管 WebView）、`scripts/build_wails_release.py`（打包脚本）和 `.github/workflows/release.yml`（发布流程）。
+本项目可以直接交给 WorkBuddy 继续开发。建议先读 [`ARCHITECTURE.md`](ARCHITECTURE.md) 了解三层结构和读写数据流，再看 `desktop.go`（`-tags desktop` 的入口，窗口如何直接拿到 handler）、`gui.go` 的 `desktopServe` 分支、`scripts/build_desktop.py`（打包脚本）和 `.github/workflows/release.yml`（发布流程）。
 
 本仓库不包含个人 Steam 库、分类方案、价格缓存、历史备份或编译产物。
 

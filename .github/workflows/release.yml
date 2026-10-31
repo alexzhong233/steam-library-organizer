@@ -16,11 +16,10 @@ permissions:
 
 env:
   GO_VERSION: "1.23.x"
-  WAILS_VERSION: "v2.10.2"
 
 jobs:
-  # 版本号先算出来，后面编译核心时注入 -X main.version，
-  # 这样二进制里 `tool -manifest-info` 显示的版本与 Release 标签永远一致。
+  # 版本号先算出来：Windows 与 macOS 各自编译时用它注入 -X main.version，
+  # 这样二进制里 `-manifest-info` 显示的版本与 Release 标签永远一致。
   version:
     name: 确定版本号
     runs-on: ubuntu-latest
@@ -59,7 +58,10 @@ jobs:
           cache-dependency-path: work/importer-v2/go.sum
 
       - name: 运行 Go 测试
-        run: go test -mod=vendor ./...
+        run: go test ./...
+
+      - name: 运行桌面入口测试
+        run: go test -tags desktop,production ./...
 
       - name: 运行桥接测试
         run: |
@@ -89,49 +91,36 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: work/importer-v2/go.sum
 
-      - name: 安装 Wails CLI
+      # 桌面入口（-tags desktop）与核心同包，产物就是一个 exe，
+      # 不再需要另外复制一份 core 到 Resources 里。
+      - name: 编译单文件
         shell: pwsh
         run: |
-          go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
-          "$env:USERPROFILE\go\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          python scripts/build_desktop.py --platform windows/${{ matrix.goarch }} `
+            --version ${{ needs.version.outputs.ver }} --out dist
+          Get-ChildItem dist
 
-      # 核心就是 work/importer-v2 编译出来的，同一份源码、同一个 tag。
-      # 以前从外部 URL 下载二进制，既需要配 4 个仓库变量 + 1 个 Secret，
-      # 又可能与外壳版本错配；这里直接编译，依赖全消。
-      - name: 编译核心
-        working-directory: work/importer-v2
-        shell: pwsh
-        env:
-          GOOS: windows
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "0"
-          VER: ${{ needs.version.outputs.ver }}
-        run: |
-          go build -mod=vendor -trimpath `
-            -ldflags "-s -w -X main.version=$env:VER" `
-            -o "$env:RUNNER_TEMP\SteamCollectionImporterCore.exe" .
-          Get-Item "$env:RUNNER_TEMP\SteamCollectionImporterCore.exe" | Select-Object Length
-
-      - name: 构建 Wails Windows ${{ matrix.arch }}
-        shell: pwsh
-        env:
-          CGO_ENABLED: "0"
-          CORE: ${{ runner.temp }}\SteamCollectionImporterCore.exe
-        run: python scripts/build_wails_release.py --platform "windows/${{ matrix.goarch }}" --core "$env:CORE"
-
-      - name: 打包 Windows ${{ matrix.arch }}
+      - name: 确认产物只有一个文件
         shell: pwsh
         run: |
-          $release = "SteamCollectionImporter-windows-${{ matrix.arch }}"
-          New-Item -ItemType Directory -Force -Path "$release/Resources" | Out-Null
-          Copy-Item "desktop-wails/build/bin/SteamCollectionImporter.exe" "$release/"
-          Copy-Item "desktop-wails/build/bin/Resources/SteamCollectionImporterCore.exe" "$release/Resources/"
-          Copy-Item "README.md" "$release/README-中文.md"
-          Copy-Item "LICENSE" "$release/"
-          Compress-Archive -Path "$release/*" -DestinationPath "$release.zip" -Force
-          Get-FileHash -Algorithm SHA256 "$release.zip" | ForEach-Object { "$($_.Hash.ToLowerInvariant())  $release.zip" } | Out-File "$release.SHA256SUMS.txt" -Encoding utf8
+          $files = @(Get-ChildItem dist -File)
+          if ($files.Count -ne 1) { throw "应只有 1 个文件，实际 $($files.Count)" }
+          Write-Host "OK：$($files[0].Name)"
 
-      - name: 上传 Windows 构建产物
+      - name: 打包
+        shell: pwsh
+        run: |
+          $zip = "SteamCollectionImporter-windows-${{ matrix.arch }}.zip"
+          New-Item -ItemType Directory -Force dist/pkg | Out-Null
+          Copy-Item "dist/SteamCollectionImporter.exe" "dist/pkg/"
+          Copy-Item "LICENSE" "dist/pkg/LICENSE"
+          Compress-Archive -Path "dist/pkg/*" -DestinationPath $zip -Force
+          Get-FileHash -Algorithm SHA256 $zip |
+            ForEach-Object { "$($_.Hash.ToLowerInvariant())  $zip" } |
+            Out-File "$($zip -replace '\.zip$','.SHA256SUMS.txt')" -Encoding utf8
+          Get-ChildItem *.zip, *.txt | Select-Object Name, Length
+
+      - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
           name: windows-${{ matrix.arch }}
@@ -142,13 +131,12 @@ jobs:
   macos:
     name: macOS ${{ matrix.arch }}
     needs: [version, test]
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-14
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: arm64
-            runner: macos-14
             goarch: arm64
     steps:
       - name: 检出源码
@@ -160,41 +148,36 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: work/importer-v2/go.sum
 
-      - name: 安装 Wails CLI
+      # .app 里的 Contents/MacOS/ 下只有一个可执行文件，
+      # 没有旧版那种 Resources/SteamCollectionImporterCore 子进程。
+      # 脚本里会做 ad-hoc 签名，否则 Apple Silicon 直接拒绝启动。
+      - name: 编译 .app 与 DMG
         run: |
-          go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          python3 scripts/build_desktop.py --platform darwin/${{ matrix.goarch }} \
+            --version ${{ needs.version.outputs.ver }} --out dist --dmg
+          ls -R dist | head -20
 
-      - name: 编译核心
-        working-directory: work/importer-v2
-        env:
-          GOOS: darwin
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "0"
-          VER: ${{ needs.version.outputs.ver }}
-        run: |
-          go build -mod=vendor -trimpath \
-            -ldflags "-s -w -X main.version=$VER" \
-            -o "$RUNNER_TEMP/SteamCollectionImporterCore" .
-          ls -lh "$RUNNER_TEMP/SteamCollectionImporterCore"
-
-      - name: 构建 Wails macOS ${{ matrix.arch }}
-        env:
-          CORE_PATH: ${{ runner.temp }}/SteamCollectionImporterCore
-        run: python3 scripts/build_wails_release.py --platform "darwin/${{ matrix.goarch }}" --core "$CORE_PATH"
-
-      - name: 打包 macOS App、DMG 和校验值
+      - name: 校验 .app 结构
         run: |
           set -e
-          app="desktop-wails/build/bin/SteamCollectionImporter.app"
+          app="dist/SteamCollectionImporter.app"
           test -d "$app"
-          base="SteamCollectionImporter-macOS-${{ matrix.arch }}"
-          ditto -c -k --sequesterRsrc --keepParent "$app" "$base.zip"
-          hdiutil create -volname "Steam 收藏整理" -srcfolder "$app" -ov -format UDZO "$base.dmg"
-          shasum -a 256 "$base.zip" "$base.dmg" > "$base.SHA256SUMS.txt"
-          cat "$base.SHA256SUMS.txt"
+          exes=$(find "$app" -type f -perm -u+x | wc -l | tr -d ' ')
+          echo "可执行文件数：$exes"
+          test "$exes" = "1" || { echo "::error::.app 里应只有 1 个可执行文件，实际 $exes"; exit 1; }
+          test -f "$app/Contents/Info.plist"
+          codesign -dv "$app" 2>&1 | head -3 || true
 
-      - name: 上传 macOS 构建产物
+      - name: 打包
+        run: |
+          set -e
+          base="SteamCollectionImporter-macOS-${{ matrix.arch }}"
+          ditto -c -k --sequesterRsrc --keepParent "dist/SteamCollectionImporter.app" "$base.zip"
+          mv "dist/SteamCollectionImporter-macOS-${{ matrix.goarch }}.dmg" "$base.dmg"
+          shasum -a 256 "$base.zip" "$base.dmg" > "$base.SHA256SUMS.txt"
+          ls -lh "$base".*
+
+      - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
           name: macos-${{ matrix.arch }}
@@ -223,15 +206,20 @@ jobs:
           {
             echo "## 下载"
             echo ""
-            echo "| 平台 | 文件 |"
-            echo "|---|---|"
-            echo "| Windows x64 | \`SteamCollectionImporter-windows-x64.zip\` |"
-            echo "| macOS Apple Silicon | \`SteamCollectionImporter-macOS-arm64.dmg\` |"
+            echo "| 平台 | 文件 | 形态 |"
+            echo "|---|---|---|"
+            echo "| Windows x64 | \`SteamCollectionImporter-windows-x64.zip\` | 解压得到一个 exe，双击即用 |"
+            echo "| macOS Apple Silicon | \`SteamCollectionImporter-macOS-arm64.dmg\` | 拖进「应用程序」，双击即用 |"
+            echo ""
+            echo "## 关于「单文件」"
+            echo ""
+            echo "程序只有一个可执行文件：Windows 是一个 exe；macOS 的 .app 里 \`Contents/MacOS/\` 下也只有一个可执行文件。"
+            echo "没有附带的核心子进程、没有 Resources 里的第二个二进制、不监听任何本地端口——"
+            echo "核心与窗口跑在同一个进程里，直接从内存拿页面。"
             echo ""
             echo "## 校验"
             echo ""
-            echo "每个压缩包都附带同名 \`.SHA256SUMS.txt\`。Windows 解压后运行 \`SteamCollectionImporter.exe\`，"
-            echo "macOS 打开 DMG 把 App 拖进「应用程序」。"
+            echo "每个压缩包都附带同名 \`.SHA256SUMS.txt\`。"
             echo ""
             echo "## 说明"
             echo ""
@@ -240,6 +228,8 @@ jobs:
             echo ""
             echo "macOS 包为 ad-hoc 签名（未公证），首次打开如提示「无法验证开发者」，"
             echo "在「系统设置 → 隐私与安全性」里点「仍要打开」，或执行 \`xattr -dr com.apple.quarantine /Applications/SteamCollectionImporter.app\`。"
+            echo ""
+            echo "命令行版本也还在：\`go build .\` 得到 CLI，\`go build -tags desktop\` 得到桌面版。"
           } > release-notes.md
           cat release-notes.md
 

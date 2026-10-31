@@ -30,7 +30,7 @@ jobs:
           cache-dependency-path: work/importer-v2/go.sum
 
       - name: go vet
-        run: go vet -mod=vendor ./...
+        run: go vet ./...
 
       - name: go test
         id: gotest
@@ -40,7 +40,7 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          go test -mod=vendor -v ./... 2>&1 | tee /tmp/go-test.log
+          go test -v ./... 2>&1 | tee /tmp/go-test.log
 
       - name: 汇总测试失败
         if: steps.gotest.outcome == 'failure'
@@ -109,7 +109,7 @@ jobs:
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: "0"
         run: |
-          go build -mod=vendor -trimpath -ldflags "-s -w -X main.version=v0.0.0-ci" \
+          go build -trimpath -ldflags "-s -w -X main.version=v0.0.0-ci" \
             -o "$RUNNER_TEMP/core${{ matrix.ext }}" .
           ls -lh "$RUNNER_TEMP/core${{ matrix.ext }}"
 
@@ -126,11 +126,11 @@ jobs:
           "$RUNNER_TEMP/core" -manifest-info
 
   desktop:
-    name: 桌面外壳（Windows）
+    name: 桌面单文件（Windows）
     runs-on: windows-latest
     defaults:
       run:
-        working-directory: desktop-wails
+        working-directory: work/importer-v2
     steps:
       - name: 检出源码
         uses: actions/checkout@v4
@@ -139,23 +139,34 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: desktop-wails/go.sum
+          cache-dependency-path: work/importer-v2/go.sum
 
-      # 外壳本身没有界面代码，全部逻辑就是把核心的网页反代进系统 WebView。
-      # 反代要改写 Host / Origin（核心只认自己的 origin），这块用单测盯住。
+      # 桌面入口和核心在同一个包里（-tags desktop），窗口直接拿内存里的 handler。
+      # 三条约定（/ → /ui、/ui → /、注入 __desktopShell）由 desktop_test.go 盯住。
       - name: go vet
         run: go vet -tags desktop,production ./...
 
       - name: go test
         run: go test -tags desktop,production ./...
 
-      - name: 编译外壳
+      - name: 编译单文件 GUI
         shell: pwsh
         run: |
-          go build -tags desktop,production -trimpath `
-            -ldflags "-s -w -H=windowsgui" `
-            -o "$env:RUNNER_TEMP/SteamCollectionImporter.exe" .
-          Get-Item "$env:RUNNER_TEMP/SteamCollectionImporter.exe" | Select-Object Length
+          python "$env:GITHUB_WORKSPACE/scripts/build_desktop.py" `
+            --platform windows/amd64 --version v0.0.0-ci --out "$env:RUNNER_TEMP/dist"
+          Get-ChildItem "$env:RUNNER_TEMP/dist"
+
+      # 这条断言就是「单文件」本身：多出任何文件（比如以前的 Resources 子进程）都算失败。
+      - name: 确认产物只有一个文件
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem "$env:RUNNER_TEMP/dist" -File -Recurse)
+          if ($files.Count -ne 1) {
+            $files | ForEach-Object { Write-Host $_.FullName }
+            throw "单文件产物应只有 1 个文件，实际 $($files.Count)"
+          }
+          $mb = [math]::Round($files[0].Length / 1MB, 1)
+          Write-Host "OK：$($files[0].Name)  $mb MB"
 
   guard:
     name: 隐私与产物检查
