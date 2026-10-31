@@ -4,22 +4,11 @@
 
 工具支持 OpenAI 兼容接口、自定义模型、JSON 导入导出、历史记录、商店价格缓存，以及带实时资格检查的免费游戏批量移除。动态收藏只读取，不会被程序静默创建、改名或改写。
 
-当前源码版本 `2.3.2`：免费许可证移除的国区校验从「每款一次 appdetails」改为「每 50 款一次 `IStoreBrowseService/GetItems`」，避开 `store.steampowered.com` 的整机限流，判定语义不变。
-
 ## 源码
 
-完整 Go 源码位于 [`work/importer-v2`](work/importer-v2)，当前版本 `2.3.2`，包含 Steam CEF 桥接、内嵌中文网页界面、审核窗口、分类引擎、免费游戏移除、价格缓存和测试，依赖随 `vendor/` 提供。`mac_wrapper.go` 是 macOS ARM64 启动器和主题代理。
+通用 Go 源码位于 [`work/importer-v2`](work/importer-v2)，包含 Steam CEF 桥接、测试和 vendored WebSocket 依赖。`mac_wrapper.go` 是 macOS ARM64 启动器和主题代理。
 
-| 文件 | 作用 |
-|---|---|
-| `main.go` / `gui.go` / `gui_ui.go` | 入口、本机 HTTP 服务、内嵌网页界面 |
-| `bridge.js` | 在 Steam CEF 里执行的桥接脚本，负责读取库与收藏、写入收藏 |
-| `engine.go` / `model.go` / `preview.go` | 计划求值、清单模型、只读预演 |
-| `collections_plan.go` | 清单导入：接受规则文件、完整库导出和快照，支持多归属 overlay |
-| `policy.go` / `store_batch.go` / `removal.go` | 价值与保护策略、商店批量查询、免费许可证移除 |
-| `prices.go` / `history.go` / `export.go` / `accounts.go` | 价格缓存、历史备份、导入导出、账号识别 |
-
-个人 Steam 库快照、个人分类方案、价格缓存和编译产物不会提交到 Git，需要在本机单独提供。没有本机个人清单时，`go test` 会用 `classification.example.json` 顶替夹具，依赖真实 AppID 的断言会自动跳过。
+个人 Steam 库快照、个人分类方案、价格缓存和编译产物不会提交到 Git，需要在本机单独提供。
 
 ## 测试和手动编译
 
@@ -33,19 +22,6 @@ GOOS=darwin GOARCH=arm64 go build -mod=vendor -o SteamCollectionImporter .
 ```
 
 仓库中的 `classification.example.json` 只是用于离线测试的五条示例数据。不要把真实 Steam 库导出文件或 API Key 提交到 Git。
-
-## 从源码构建 GUI 核心
-
-桌面外壳本身只有窗口和 WebView，真正的界面与 Steam 操作都在 `SteamCollectionImporterCore` 里。核心可以直接从本仓库构建，三个平台都能交叉编译，无需 cgo：
-
-```sh
-cd work/importer-v2
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -mod=vendor -o SteamCollectionImporterCore.exe .
-CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -mod=vendor -o SteamCollectionImporterCore-arm64.exe .
-CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -mod=vendor -o SteamCollectionImporterCore .
-```
-
-产物约 14–15 MB。`SteamCollectionImporter` 这个名字留给外壳，核心统一叫 `SteamCollectionImporterCore`，`scripts/build_wails_release.py` 和发布工作流都按这个名字找。
 
 ## macOS ARM64 自动发布
 
@@ -63,7 +39,7 @@ python3 scripts/build_release.py
 python3 scripts/build_release.py --install
 ```
 
-脚本需要一份已经构建好的 GUI 核心。默认优先使用 `/Applications/SteamCollectionImporter.app` 里的核心；也可以先按上一节从源码构建，再用路径指定：
+当前 GUI 核心是本机已有的二进制文件。脚本会优先使用 `/Applications/SteamCollectionImporter.app` 中的核心；如果核心在其他位置，可以指定：
 
 ```sh
 python3 scripts/build_release.py --gui-core /path/to/SteamCollectionImporterCore
@@ -80,7 +56,7 @@ cd desktop-wails
 wails build
 ```
 
-构建 App 时，把 `SteamCollectionImporterCore` 放到 App 的 `Resources` 目录；也可以用环境变量 `STEAM_COLLECTION_CORE` 指定核心路径。核心可以从本仓库源码构建（见上文），Windows 发行版需要对应架构的核心二进制；没有核心时程序会显示明确的启动错误，不会打开空白窗口。
+构建 App 时，把 `SteamCollectionImporterCore` 放到 App 的 `Resources` 目录；也可以用环境变量 `STEAM_COLLECTION_CORE` 指定核心路径。当前仓库只包含桌面外壳，Windows 发行版仍需要对应架构的 Core 二进制；没有 Core 时程序会显示明确的启动错误，不会打开空白窗口。
 
 macOS 本机可以直接双击根目录的 `build-wails.command`，或运行：
 
@@ -140,3 +116,9 @@ git push origin v1.0.0
 - 单元测试不会连接 Steam，也不会修改收藏或移除许可证。
 
 本项目采用 MIT License。
+
+## WorkBuddy 接手
+
+本项目可以直接交给 WorkBuddy 继续开发。建议先阅读 `WORKBUDDY.md`，再查看 `desktop-wails/main.go`、`scripts/build_wails_release.py` 和 `.github/workflows/release.yml`。
+
+本仓库不包含个人 Steam 库、分类方案、价格缓存、历史备份或 GUI Core 二进制。构建桌面版前，需要按 README 配置对应平台的 `GUI_CORE_*_URL` 和可选 SHA256。
