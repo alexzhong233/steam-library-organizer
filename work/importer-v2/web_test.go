@@ -20,10 +20,17 @@ func TestPageKeepsSingleDocument(t *testing.T) {
 	if n := strings.Count(guiHTML, "<html"); n != 1 {
 		t.Fatalf("应只有一个 <html>，实际 %d 个", n)
 	}
-	for _, want := range []string{"<style>", "</style>", "<script>", "</script></body></html>"} {
+	if n := strings.Count(guiHTML, "</html>"); n != 1 {
+		t.Fatalf("应只有一个 </html>，实际 %d 个", n)
+	}
+	for _, want := range []string{"<style>", "</style>", "<script>", "</script>", "</body>"} {
 		if !strings.Contains(guiHTML, want) {
 			t.Errorf("页面缺少 %q", want)
 		}
+	}
+	// 格式化后 </body> 与 </html> 不再相邻，所以只能比位置不能比整串。
+	if strings.LastIndex(guiHTML, "</body>") > strings.LastIndex(guiHTML, "</html>") {
+		t.Error("</body> 应出现在 </html> 之前")
 	}
 }
 

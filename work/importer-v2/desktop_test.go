@@ -85,7 +85,7 @@ func TestGUIPageDesktopFlag(t *testing.T) {
 	if !strings.Contains(page, "window.__desktopShell=true") {
 		t.Fatal("桌面模式必须注入 window.__desktopShell=true")
 	}
-	if !strings.Contains(page, "</script></body></html>") {
+	if !strings.Contains(page, "</body>") || !strings.Contains(page, "</html>") {
 		t.Fatal("注入破坏了页面结构")
 	}
 	if strings.Count(page, "<html") != 1 {

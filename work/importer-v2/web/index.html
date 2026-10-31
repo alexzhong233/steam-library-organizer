@@ -1,16 +1,242 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Steam 收藏整理</title>
-<script>try{var __t=localStorage.getItem('sci-theme');if(__t)document.documentElement.setAttribute('data-theme',__t)}catch(e){}</script>
-<style>
-{{CSS}}</style></head><body><main>
-<div class="top"><div><h1>Steam 收藏整理</h1><div class="subtle">按收藏浏览和编辑 · 价格来自中国区 Steam 商店 · 规则 JSON 仅用于导入/导出</div></div><div class="top-right"><button id="themeToggle" class="secondary theme-toggle" onclick="toggleTheme()" title="切换白天/黑夜模式" aria-label="切换白天/黑夜模式">🌙</button><div id="status" class="status">正在读取 Steam…</div></div></div>
-<div class="toolbar"><button onclick="showTab('library')" class="secondary">游戏库</button><button onclick="showTab('history')" class="secondary">历史 / 导入导出</button><button onclick="diagnostics()" class="connection-action">连接诊断</button><button onclick="restartSteam()" class="secondary connection-action">准备连接 Steam</button><button onclick="connect()" class="connection-action">重新读取 Steam</button><button onclick="preview()">生成预览</button><button onclick="apply()" class="warn">确认保存到 Steam</button><button onclick="toggleAI()" class="secondary" title="打开或收起 AI 整理面板">✨ AI 整理</button><button onclick="quitTool()" class="secondary">退出工具</button></div>
-<section id="diagnosticsPanel" class="panel hidden"><h2>连接诊断</h2><div id="diagnosticsResult"></div></section>
-<div id="libraryView"><div class="layout"><aside class="panel sticky"><h2>收藏</h2><div class="note">动态收藏由你在 Steam 中创建和维护。程序只读取它们来计算重叠，不会自动创建、改名或修改动态规则。</div><div id="dynamicTree" class="tree"></div><div id="staticTree" class="tree"></div></aside>
-<section class="panel"><div class="view-switch"><button class="secondary" onclick="browsingActual=true;selected='';renderAll()">Steam 当前收藏</button><button class="secondary" onclick="browsingActual=false;selected='';renderAll()">待保存方案</button></div><div class="toolbar" style="padding:0;border:0;background:none"><div style="flex:1"><h2 id="collectionTitle">全部游戏</h2><div id="collectionMeta" class="subtle"></div></div><button onclick="refreshPrices()" class="secondary">获取商店资料和价格</button></div><div class="toolbar"><input id="bulkTarget" list="bulkTargets" placeholder="输入或选择目标静态收藏"><datalist id="bulkTargets"></datalist><button onclick="applySelectedTarget()">应用到勾选游戏</button><button onclick="togglePageSelection()" class="secondary">勾选本页</button><button onclick="checkedGames.clear();renderGames()" class="secondary">清空勾选</button><button onclick="previewRemoval()" class="warn">移除选中的免费游戏</button><span id="selectionCount" class="subtle"></span></div><div class="toolbar"><select id="publisherFilter" style="flex:1" onchange="pageNo=0;renderGames()"><option value="">全部发行厂商</option></select><select id="gameSort" style="flex:1" onchange="pageNo=0;renderGames()"><option value="name">按名称</option><option value="recent">按最后游玩</option><option value="playtime">按游玩时长</option></select></div><input id="search" placeholder="搜索名称、AppID 或厂商" oninput="pageNo=0;renderGames()"><div class="table-wrap"><table><thead><tr><th><input id="selectAll" type="checkbox" title="全选当前筛选结果（跨页）" aria-label="全选当前筛选结果"></th><th>游戏</th><th>目标收藏</th><th>发行厂商</th><th>最后游玩</th><th>游玩时长</th><th>中国区价格</th><th>状态</th></tr></thead><tbody id="games"></tbody></table></div><div class="toolbar"><button onclick="pageBy(-1)" class="secondary">上一页</button><span id="pageInfo" class="subtle"></span><button onclick="pageBy(1)" class="secondary">下一页</button></div></section>
-<details class="panel ai-panel" id="aiPanel"><summary>AI 整理</summary><p class="subtle">分类提示词由你编写，AI 结果会先进入独立审核窗口。</p><input id="aiurl" placeholder="OpenAI 兼容地址，例如 https://api.example.com/v1"><input id="aikey" type="password" placeholder="API Key（仅本次运行内存）"><button onclick="models()">获取模型</button><select id="model"></select><textarea id="prompt" class="ai-prompt" placeholder="请填写自己的分类规则。例如：知名大作按系列归类，精品独立游戏单独收藏，其余按玩法分类。此处参考仅供修改。"></textarea><button onclick="suggest()">生成 AI 草稿并审核</button><div id="priceInfo" class="subtle"></div></details></div>
-<section class="panel"><h2>预览和执行日志</h2><div id="preview">尚未预览</div></section>
-</div><section id="historyView" class="panel hidden"><h2>历史</h2><p class="subtle">仅在实际应用收藏修改前自动备份；读取、导入和预览不会产生历史。外置整理清单也在这里，删除只影响本机文件。</p><input id="ruleFile" type="file" accept=".json,application/json"><button onclick="importRules()" class="secondary">导入 JSON 到审核窗口</button><button onclick="exportCurrent()" class="secondary">导出当前方案 JSON</button><button onclick="exportLibrary()" class="secondary">导出游戏列表和收藏</button><button onclick="refreshHistory()" class="secondary">刷新历史</button><div id="historyList" class="tree"></div></section>
-</main><script>
-{{JS}}</script></body></html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Steam 收藏整理</title>
+    <script>
+      try {
+        var __t = localStorage.getItem("sci-theme");
+        if (__t) document.documentElement.setAttribute("data-theme", __t);
+      } catch (e) {}
+    </script>
+    <style>
+      {{CSS}}
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="top">
+        <div>
+          <h1>Steam 收藏整理</h1>
+          <div class="subtle">
+            按收藏浏览和编辑 · 价格来自中国区 Steam 商店 · 规则 JSON
+            仅用于导入/导出
+          </div>
+        </div>
+        <div class="top-right">
+          <button
+            id="themeToggle"
+            class="secondary theme-toggle"
+            onclick="toggleTheme()"
+            title="切换白天/黑夜模式"
+            aria-label="切换白天/黑夜模式"
+          >
+            🌙
+          </button>
+          <div id="status" class="status">正在读取 Steam…</div>
+        </div>
+      </div>
+      <div class="toolbar">
+        <button onclick="showTab('library')" class="secondary">游戏库</button
+        ><button onclick="showTab('history')" class="secondary">
+          历史 / 导入导出</button
+        ><button onclick="diagnostics()" class="connection-action">
+          连接诊断</button
+        ><button onclick="restartSteam()" class="secondary connection-action">
+          准备连接 Steam</button
+        ><button onclick="connect()" class="connection-action">
+          重新读取 Steam</button
+        ><button onclick="preview()">生成预览</button
+        ><button onclick="apply()" class="warn">确认保存到 Steam</button
+        ><button
+          onclick="toggleAI()"
+          class="secondary"
+          title="打开或收起 AI 整理面板"
+        >
+          ✨ AI 整理</button
+        ><button onclick="quitTool()" class="secondary">退出工具</button>
+      </div>
+      <section id="diagnosticsPanel" class="panel hidden">
+        <h2>连接诊断</h2>
+        <div id="diagnosticsResult"></div>
+      </section>
+      <div id="libraryView">
+        <div class="layout">
+          <aside class="panel sticky">
+            <h2>收藏</h2>
+            <div class="note">
+              动态收藏由你在 Steam
+              中创建和维护。程序只读取它们来计算重叠，不会自动创建、改名或修改动态规则。
+            </div>
+            <div id="dynamicTree" class="tree"></div>
+            <div id="staticTree" class="tree"></div>
+          </aside>
+          <section class="panel">
+            <div class="view-switch">
+              <button
+                class="secondary"
+                onclick="
+                  browsingActual = true;
+                  selected = '';
+                  renderAll();
+                "
+              >
+                Steam 当前收藏</button
+              ><button
+                class="secondary"
+                onclick="
+                  browsingActual = false;
+                  selected = '';
+                  renderAll();
+                "
+              >
+                待保存方案
+              </button>
+            </div>
+            <div
+              class="toolbar"
+              style="padding: 0; border: 0; background: none"
+            >
+              <div style="flex: 1">
+                <h2 id="collectionTitle">全部游戏</h2>
+                <div id="collectionMeta" class="subtle"></div>
+              </div>
+              <button onclick="refreshPrices()" class="secondary">
+                获取商店资料和价格
+              </button>
+            </div>
+            <div class="toolbar">
+              <input
+                id="bulkTarget"
+                list="bulkTargets"
+                placeholder="输入或选择目标静态收藏"
+              /><datalist id="bulkTargets"></datalist
+              ><button onclick="applySelectedTarget()">应用到勾选游戏</button
+              ><button onclick="togglePageSelection()" class="secondary">
+                勾选本页</button
+              ><button
+                onclick="
+                  checkedGames.clear();
+                  renderGames();
+                "
+                class="secondary"
+              >
+                清空勾选</button
+              ><button onclick="previewRemoval()" class="warn">
+                移除选中的免费游戏</button
+              ><span id="selectionCount" class="subtle"></span>
+            </div>
+            <div class="toolbar">
+              <select
+                id="publisherFilter"
+                style="flex: 1"
+                onchange="
+                  pageNo = 0;
+                  renderGames();
+                "
+              >
+                <option value="">全部发行厂商</option></select
+              ><select
+                id="gameSort"
+                style="flex: 1"
+                onchange="
+                  pageNo = 0;
+                  renderGames();
+                "
+              >
+                <option value="name">按名称</option>
+                <option value="recent">按最后游玩</option>
+                <option value="playtime">按游玩时长</option>
+              </select>
+            </div>
+            <input
+              id="search"
+              placeholder="搜索名称、AppID 或厂商"
+              oninput="
+                pageNo = 0;
+                renderGames();
+              "
+            />
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>
+                      <input
+                        id="selectAll"
+                        type="checkbox"
+                        title="全选当前筛选结果（跨页）"
+                        aria-label="全选当前筛选结果"
+                      />
+                    </th>
+                    <th>游戏</th>
+                    <th>目标收藏</th>
+                    <th>发行厂商</th>
+                    <th>最后游玩</th>
+                    <th>游玩时长</th>
+                    <th>中国区价格</th>
+                    <th>状态</th>
+                  </tr>
+                </thead>
+                <tbody id="games"></tbody>
+              </table>
+            </div>
+            <div class="toolbar">
+              <button onclick="pageBy(-1)" class="secondary">上一页</button
+              ><span id="pageInfo" class="subtle"></span
+              ><button onclick="pageBy(1)" class="secondary">下一页</button>
+            </div>
+          </section>
+          <details class="panel ai-panel" id="aiPanel">
+            <summary>AI 整理</summary>
+            <p class="subtle">
+              分类提示词由你编写，AI 结果会先进入独立审核窗口。
+            </p>
+            <input
+              id="aiurl"
+              placeholder="OpenAI 兼容地址，例如 https://api.example.com/v1"
+            /><input
+              id="aikey"
+              type="password"
+              placeholder="API Key（仅本次运行内存）"
+            /><button onclick="models()">获取模型</button
+            ><select id="model"></select
+            ><textarea
+              id="prompt"
+              class="ai-prompt"
+              placeholder="请填写自己的分类规则。例如：知名大作按系列归类，精品独立游戏单独收藏，其余按玩法分类。此处参考仅供修改。"
+            ></textarea
+            ><button onclick="suggest()">生成 AI 草稿并审核</button>
+            <div id="priceInfo" class="subtle"></div>
+          </details>
+        </div>
+        <section class="panel">
+          <h2>预览和执行日志</h2>
+          <div id="preview">尚未预览</div>
+        </section>
+      </div>
+      <section id="historyView" class="panel hidden">
+        <h2>历史</h2>
+        <p class="subtle">
+          仅在实际应用收藏修改前自动备份；读取、导入和预览不会产生历史。外置整理清单也在这里，删除只影响本机文件。
+        </p>
+        <input
+          id="ruleFile"
+          type="file"
+          accept=".json,application/json"
+        /><button onclick="importRules()" class="secondary">
+          导入 JSON 到审核窗口</button
+        ><button onclick="exportCurrent()" class="secondary">
+          导出当前方案 JSON</button
+        ><button onclick="exportLibrary()" class="secondary">
+          导出游戏列表和收藏</button
+        ><button onclick="refreshHistory()" class="secondary">刷新历史</button>
+        <div id="historyList" class="tree"></div>
+      </section>
+    </main>
+    <script>
+      {{JS}}
+    </script>
+  </body>
+</html>
