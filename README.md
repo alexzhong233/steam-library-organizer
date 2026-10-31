@@ -53,20 +53,25 @@ python3 scripts/build_release.py --gui-core /path/to/SteamCollectionImporterCore
 - Windows ARM64：`SteamCollectionImporter-windows-arm64.exe`
 - macOS ARM64：签名的 `.app` 和 `.dmg`
 
-Windows 两个版本使用仓库中的 Go 源码，可以直接构建。macOS 图形版还需要历史 GUI 核心二进制；该核心没有提交到仓库，也不应把个人 Steam 数据一起提交。首次配置 Actions 时，在仓库 **Settings → Secrets and variables → Actions → New repository secret** 创建 `GUI_CORE_B64`，值为本机核心文件的 base64 内容：
+Windows 两个版本使用仓库中的 Go 源码，可以直接构建。macOS 图形版还需要历史 GUI 核心二进制；该核心没有提交到仓库，也不应把个人 Steam 数据一起提交。由于核心文件约 8.7 MB，不能放进 GitHub Actions 的 Secret（Secret 有大小限制）。请把核心放到 GitHub Release 资产、对象存储或自己的静态下载地址，然后在仓库 **Settings → Secrets and variables → Actions → Variables** 新建：
+
+- `GUI_CORE_URL`：核心文件的下载 URL。
+- `GUI_CORE_SHA256`：可选的核心 SHA256，用于构建时校验。
+
+本机核心的校验值可这样取得：
 
 ```sh
-base64 -i /Applications/SteamCollectionImporter.app/Contents/Resources/SteamCollectionImporterCore | pbcopy
+shasum -a 256 /Applications/SteamCollectionImporter.app/Contents/Resources/SteamCollectionImporterCore
 ```
 
-然后把剪贴板内容粘贴到 `GUI_CORE_B64`。不要把这个值写入代码或公开日志。配置完成后，在 GitHub 的 **Actions → 构建并发布 Release → Run workflow** 输入版本号（例如 `v1.0.0`）；或者推送一个 `v*` 标签：
+如果下载地址是私有的，再在 **Secrets** 中新建 `GUI_CORE_DOWNLOAD_TOKEN`；工作流会以 Bearer Token 下载。配置完成后，在 GitHub 的 **Actions → 构建并发布 Release → Run workflow** 输入版本号（例如 `v1.0.0`）；或者推送一个 `v*` 标签：
 
 ```sh
 git tag v1.0.0
 git push origin v1.0.0
 ```
 
-工作流会在三个构建都成功后创建 GitHub Release，并附上两个 Windows 压缩包、macOS DMG、macOS tar.gz 和校验文件。若未设置 `GUI_CORE_B64`，macOS 作业会直接失败，不会发布缺少核心程序的不可用 App。
+工作流会在三个构建都成功后创建 GitHub Release，并附上两个 Windows 压缩包、macOS DMG、macOS tar.gz 和校验文件。若未设置 `GUI_CORE_URL`，macOS 作业会直接失败，不会发布缺少核心程序的不可用 App。
 
 ## 配置
 
