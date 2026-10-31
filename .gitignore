@@ -8,33 +8,36 @@ __pycache__/
 *.pyc
 *.log
 
-# Private Steam library snapshots, prices, history, and personal plans
+# 个人 Steam 库快照、分类方案、价格缓存、研究数据：不公开
 /data/
 /outputs/
-/work/live-scan-*/
-/work/store_batches/
-/work/**/*.json
-/work/**/*.html
-/work/**/*.jpg
-/work/**/*.log
-/work/**/history/
-/work/**/backups/
-/work/**/removals/
-/work/**/prices.json
-/work/**/classification.json
-!/work/importer-v2/classification.example.json
+/docs/
 
-# Local binaries and application bundles
+# work/ 下除工具源码外，都是个人研究产物（全库元数据、历史快照、移除日志）
+/work/*
+!/work/importer-v2/
+/work/importer-v2/classification.json
+/work/importer-v2/prices.json
+/work/importer-v2/history/
+/work/importer-v2/backups/
+/work/importer-v2/removals/
+/work/importer-v2/*.exe
+/work/importer-v2/SteamCollectionImporter
+/work/importer-v2/SteamCollectionImporter-arm64.exe
+
+# scripts/ 只公开发布脚本，个人方案生成与抓取脚本留在本地
+/scripts/*
+!/scripts/build_release.py
+!/scripts/build_wails_release.py
+
+# 本地二进制与打包产物
 *.exe
 *.dmg
 *.app/
 /dist/
 /desktop-wails/build/
-/work/importer-v2/SteamCollectionImporter
-/work/importer-v2/SteamCollectionImporter-arm64.exe
 
-# Local-only project notes and personal scripts
+# 本地笔记、编辑器项目数据
+/.workbuddy/
 /AGENTS.md
 /WORKBUDDY.md
-/docs/
-/reclassify_v34.py
