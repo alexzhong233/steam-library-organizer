@@ -94,16 +94,16 @@ python3 scripts/build_wails_release.py --platform darwin/arm64 --install
 
 ## GitHub Actions 自动发布
 
-`.github/workflows/release.yml` 会在推送 `v*` 标签或手动触发时，构建五个包：
+`.github/workflows/release.yml` 会在推送 `v*` 标签时构建两个包（手动触发只试编译、不发布）：
 
 | 平台 | 产物 |
 |---|---|
 | Windows x64 | `SteamCollectionImporter-windows-x64.zip` |
-| Windows ARM64 | `SteamCollectionImporter-windows-arm64.zip` |
 | macOS Apple Silicon | `SteamCollectionImporter-macOS-arm64.dmg` / `.zip` |
-| macOS Intel | `SteamCollectionImporter-macOS-x64.dmg` / `.zip` |
 
 **不需要配置任何 Secret 或变量。** 图形核心就是 `work/importer-v2` 编译出来的，工作流在各自平台的 runner 上直接编译（`CGO_ENABLED=0`），再交给 `scripts/build_wails_release.py` 打进 App 的 `Resources/`。这样核心与外壳永远同源同版本，不会出现「外壳 2.3.2 + 核心 1.0.0」的错配。
+
+外壳没有自己的界面代码，是把核心的网页用反向代理装进系统 WebView；核心与外壳之间的三条硬约定（Origin 改写、首页走 `/ui`、审核窗口用内嵌浮层替代 `window.open`）记在 [`ARCHITECTURE.md`](ARCHITECTURE.md) 里，`desktop-wails/main_test.go` 有对应单测。
 
 版本号由工作流注入 `-ldflags "-X main.version=<tag去v>"`，所以发布出来的二进制里 `SteamCollectionImporterCore -manifest-info` 显示的版本与 Release 标签一致。
 

@@ -161,6 +161,28 @@ python scripts/build_wails_release.py --platform darwin/arm64 --core <编译好�
 
 `--core` 只是把 core 复制进 App 的 `Resources/`。**core 就是同一份源码编译出来的**，所以 CI 里直接编译即可，不需要从外部下载二进制。
 
+### 外壳怎么把核心页面装进 WebView
+
+外壳自己没有任何界面代码，`desktop-wails` 干三件事：起 core、把 core 的网页反代进系统 WebView、退出时收掉 core。
+
+```go
+AssetServer: &assetserver.Options{Handler: shellHandler{proxy: httputil.NewSingleHostReverseProxy(coreURL)}}
+```
+
+三处必须注意，否则在壳里一定是白屏或 403：
+
+| 位置 | 现象 | 处理 |
+|---|---|---|
+| `Origin` 头 | WebView 发的是 `http://wails.localhost`，核心 `guiGuard` 只认自己 → 每个 POST 403 | 反代时统一改写成 `http://<核心 Host>` |
+| 首页路径 | Wails 对 `/` 和 `*/index.html` 会截下响应体做 HTML 重排并注入 `/wails/runtime.js` | 首页挂 `/ui`，`/` 302 过去 |
+| `window.open` | WebView2 与 WKWebView 都不支持开新窗（wails 两平台都没接 `NewWindowRequested`） | 首页注入 `window.__desktopShell=true`，审核窗口改用内嵌浮层 |
+
+核心起不来时外壳不 panic，而是渲染一张可读的失败页（含手动命令行）。
+
+`desktop-wails/main_test.go` 用假核心把上面三条都钉住了，CI 的 `desktop` job 会跑。
+
+核心侧的配合项：`-browser=false` 让核心不要额外弹一个浏览器标签页（默认仍为 `true`，命令行直跑时行为不变）。
+
 ## 测试
 
 ```
