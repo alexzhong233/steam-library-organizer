@@ -4,6 +4,8 @@
 *.go      text eol=lf
 *.js      text eol=lf
 *.mjs     text eol=lf
+*.css     text eol=lf
+*.html    text eol=lf
 *.py      text eol=lf
 *.sh      text eol=lf
 *.command text eol=lf
