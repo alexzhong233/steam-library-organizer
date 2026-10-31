@@ -107,17 +107,24 @@ python3 scripts/build_wails_release.py --platform darwin/arm64 --install
 
 版本号由工作流注入 `-ldflags "-X main.version=<tag去v>"`，所以发布出来的二进制里 `SteamCollectionImporterCore -manifest-info` 显示的版本与 Release 标签一致。
 
-发版两种方式：
+发版只有一条路：打 `v*` 标签推上去。
 
 ```sh
-# 1) 推标签，最常用
-git tag v2.3.3
-git push origin v2.3.3
+git tag v2.3.4
+git push origin v2.3.4
 ```
 
-```text
-# 2) 手动：Actions → 构建桌面版并发布 Release → Run workflow
-#    输入版本号（如 v2.3.3），留空则用 v0.0.0-run.<运行号>
+推完去 Actions 看「构建桌面版并发布 Release」，全程约 2 分钟。测试、Windows x64、macOS arm64 三个 job 全绿后才会建 Release 并挂上五个附件；**任何一侧失败都不会建 Release**，得去对应 job 的日志里找原因。
+
+只想验证能不能编译、不真发版时，用 Actions → 构建桌面版并发布 Release → Run workflow（版本号可留空）：只试编译，产物在 Artifacts（需登录、90 天过期），不建 Release、不打标签。
+
+标签不能原地重打：本地已有同名 tag 时 `git tag` 会报错，远端同名 tag 再推也不会触发。要重发得先删掉两边再推新的提交：
+
+```sh
+gh release delete v2.3.4 --yes      # 若已建过 Release
+git push --delete origin v2.3.4
+git tag -d v2.3.4
+git tag v2.3.4 && git push origin v2.3.4
 ```
 
 另外 `.github/workflows/ci.yml` 在每次 push 到 `main` 和每个 PR 上跑：`go vet`、`go test`、桥接脚本测试、五个平台交叉编译、离线自测，以及一条隐私检查——确认个人清单和真实账号没有被误提交。
