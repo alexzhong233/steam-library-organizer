@@ -73,6 +73,8 @@ git push origin v1.0.0
 
 工作流会在三个构建都成功后创建 GitHub Release，并附上两个 Windows 压缩包、macOS DMG、macOS tar.gz 和校验文件。若未设置 `GUI_CORE_URL`，macOS 作业会直接失败，不会发布缺少核心程序的不可用 App。
 
+请注意：仓库目前公开的是 `work/importer-v2` 的 Go 导入器源码，Windows Release 构建的是这套源码；当前网页 GUI 核心没有纳入仓库。若要让 Windows Release 也使用另一套 GUI 核心，需要先把对应的 Windows GUI 源码或可下载构建产物接入工作流。
+
 ## 配置
 
 启动工具后，在右侧“AI 整理”面板中填写 OpenAI 兼容 API 根地址、API Key 和模型，然后点击“获取模型”。提示词由用户自行编写，AI 结果会先进入独立审核窗口，确认后才会载入待保存方案。
