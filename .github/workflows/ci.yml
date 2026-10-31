@@ -1,0 +1,145 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.23.x"
+
+jobs:
+  test:
+    name: 单元测试
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: work/importer-v2
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: work/importer-v2/go.sum
+
+      - name: go vet
+        run: go vet -mod=vendor ./...
+
+      - name: go test
+        # 个人清单 classification.json 不进仓库，测试会自动回落到
+        # classification.example.json，依赖真实 AppID 的断言随即跳过。
+        # 注意：不要接管道（如 | tail），否则退出码被吞、失败也显示成功。
+        run: go test -mod=vendor ./...
+
+  bridge:
+    name: 桥接脚本测试
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 运行 bridge 测试
+        working-directory: work/importer-v2
+        run: node --test bridge_test.mjs
+
+  build:
+    name: 编译 ${{ matrix.os }}/${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows
+            arch: amd64
+            ext: .exe
+          - os: windows
+            arch: arm64
+            ext: .exe
+          - os: darwin
+            arch: arm64
+            ext: ""
+          - os: darwin
+            arch: amd64
+            ext: ""
+          - os: linux
+            arch: amd64
+            ext: ""
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: work/importer-v2/go.sum
+
+      - name: 编译核心
+        working-directory: work/importer-v2
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: "0"
+        run: |
+          go build -mod=vendor -trimpath -ldflags "-s -w -X main.version=v0.0.0-ci" \
+            -o "$RUNNER_TEMP/core${{ matrix.ext }}" .
+          ls -lh "$RUNNER_TEMP/core${{ matrix.ext }}"
+
+      - name: 冒烟：离线自测
+        # -self-test 不连 Steam，只验证内置逻辑，可跨平台跑。
+        if: matrix.os == 'linux'
+        run: |
+          chmod +x "$RUNNER_TEMP/core"
+          "$RUNNER_TEMP/core" -self-test
+
+      - name: 冒烟：清单信息
+        if: matrix.os == 'linux'
+        run: |
+          "$RUNNER_TEMP/core" -manifest-info
+
+  guard:
+    name: 隐私与产物检查
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 禁止个人数据入库
+        run: |
+          set -e
+          fail=0
+          # 真实 Steam 清单、账号、库快照一律不进仓库
+          for pattern in 'work/importer-v2/classification.json' \
+                         'work/importer-v2/live-fresh.json'; do
+            if git ls-files --error-unmatch "$pattern" >/dev/null 2>&1; then
+              echo "::error::$pattern 不应被 Git 跟踪"
+              fail=1
+            fi
+          done
+          # 只针对真实账号，不用通用 17 位正则——测试夹具里的假 ID
+          # （基址+12345）是合法且必要的，不该被误伤。
+          if git grep -nIE '137903045|76561198098168773' -- ':!vendor'; then
+            echo "::error::源码中出现真实账号标识"
+            fail=1
+          fi
+          exit $fail
+
+      - name: 构建产物不入库
+        run: |
+          if git ls-files | grep -Ei '\.(exe|app|dmg|zip)$'; then
+            echo "::error::仓库中出现了二进制产物"
+            exit 1
+          fi
+          echo "OK"

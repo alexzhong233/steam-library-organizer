@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "版本号，例如 v1.0.0；留空则使用 run-运行号"
+        description: "版本号，例如 v2.3.3；留空则使用 v0.0.0-run.<运行号>"
         required: false
         type: string
 
@@ -19,6 +19,29 @@ env:
   WAILS_VERSION: "v2.10.2"
 
 jobs:
+  # 版本号先算出来，后面编译核心时注入 -X main.version，
+  # 这样二进制里 `tool -manifest-info` 显示的版本与 Release 标签永远一致。
+  version:
+    name: 确定版本号
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      ver: ${{ steps.v.outputs.ver }}
+    steps:
+      - name: 计算标签
+        id: v
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          GIT_TAG: ${{ github.ref_name }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          if [ -n "$INPUT_VERSION" ]; then tag="$INPUT_VERSION"
+          elif [[ "$GIT_TAG" == v* ]]; then tag="$GIT_TAG"
+          else tag="v0.0.0-run.$RUN_NUMBER"; fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "ver=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "版本：$tag（注入 main.version=${tag#v}）"
+
   test:
     name: 测试
     runs-on: ubuntu-latest
@@ -28,68 +51,76 @@ jobs:
     steps:
       - name: 检出源码
         uses: actions/checkout@v4
+
       - name: 安装 Go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: work/importer-v2/go.sum
+
       - name: 运行 Go 测试
         run: go test -mod=vendor ./...
 
+      - name: 运行桥接测试
+        run: |
+          if command -v node >/dev/null 2>&1; then
+            node --test bridge_test.mjs
+          else
+            echo "跳过：runner 无 node"
+          fi
+
   windows:
     name: Windows ${{ matrix.arch }}
-    needs: test
+    needs: [version, test]
     runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: x64
-            platform: windows/amd64
-            core_url: GUI_CORE_WINDOWS_X64_URL
-            core_sha: GUI_CORE_WINDOWS_X64_SHA256
+            goarch: amd64
           - arch: arm64
-            platform: windows/arm64
-            core_url: GUI_CORE_WINDOWS_ARM64_URL
-            core_sha: GUI_CORE_WINDOWS_ARM64_SHA256
+            goarch: arm64
     steps:
       - name: 检出源码
         uses: actions/checkout@v4
+
       - name: 安装 Go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: work/importer-v2/go.sum
+
       - name: 安装 Wails CLI
         shell: pwsh
         run: |
-          go install github.com/wailsapp/wails/v2/cmd/wails@${env:WAILS_VERSION}
+          go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
           "$env:USERPROFILE\go\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-      - name: 读取 Core 配置
-        id: core
+
+      # 核心就是 work/importer-v2 编译出来的，同一份源码、同一个 tag。
+      # 以前从外部 URL 下载二进制，既需要配 4 个仓库变量 + 1 个 Secret，
+      # 又可能与外壳版本错配；这里直接编译，依赖全消。
+      - name: 编译核心
+        working-directory: work/importer-v2
         shell: pwsh
         env:
-          CORE_URL: ${{ vars[matrix.core_url] }}
-          CORE_SHA256: ${{ vars[matrix.core_sha] }}
-          CORE_TOKEN: ${{ secrets.GUI_CORE_DOWNLOAD_TOKEN }}
+          GOOS: windows
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+          VER: ${{ needs.version.outputs.ver }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:CORE_URL)) {
-            throw "缺少仓库变量 ${{ matrix.core_url }}。请配置对应 Windows Core 下载地址。"
-          }
-          $core = Join-Path $env:RUNNER_TEMP "SteamCollectionImporterCore.exe"
-          $headers = @{}
-          if (-not [string]::IsNullOrWhiteSpace($env:CORE_TOKEN)) { $headers["Authorization"] = "Bearer $env:CORE_TOKEN" }
-          Invoke-WebRequest -Uri $env:CORE_URL -Headers $headers -OutFile $core
-          if (-not [string]::IsNullOrWhiteSpace($env:CORE_SHA256)) {
-            $actual = (Get-FileHash -Algorithm SHA256 $core).Hash.ToLowerInvariant()
-            if ($actual -ne $env:CORE_SHA256.ToLowerInvariant()) { throw "Core SHA256 不匹配：$actual" }
-          }
-          "path=$core" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          go build -mod=vendor -trimpath `
+            -ldflags "-s -w -X main.version=$env:VER" `
+            -o "$env:RUNNER_TEMP\SteamCollectionImporterCore.exe" .
+          Get-Item "$env:RUNNER_TEMP\SteamCollectionImporterCore.exe" | Select-Object Length
+
       - name: 构建 Wails Windows ${{ matrix.arch }}
         shell: pwsh
         env:
           CGO_ENABLED: "0"
-        run: python scripts/build_wails_release.py --platform "${{ matrix.platform }}" --core "${{ steps.core.outputs.path }}"
+          CORE: ${{ runner.temp }}\SteamCollectionImporterCore.exe
+        run: python scripts/build_wails_release.py --platform "windows/${{ matrix.goarch }}" --core "$env:CORE"
+
       - name: 打包 Windows ${{ matrix.arch }}
         shell: pwsh
         run: |
@@ -101,6 +132,7 @@ jobs:
           Copy-Item "LICENSE" "$release/"
           Compress-Archive -Path "$release/*" -DestinationPath "$release.zip" -Force
           Get-FileHash -Algorithm SHA256 "$release.zip" | ForEach-Object { "$($_.Hash.ToLowerInvariant())  $release.zip" } | Out-File "$release.SHA256SUMS.txt" -Encoding utf8
+
       - name: 上传 Windows 构建产物
         uses: actions/upload-artifact@v4
         with:
@@ -110,84 +142,116 @@ jobs:
             SteamCollectionImporter-windows-${{ matrix.arch }}.SHA256SUMS.txt
 
   macos:
-    name: macOS ARM64
-    needs: test
-    runs-on: macos-14
+    name: macOS ${{ matrix.arch }}
+    needs: [version, test]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-14
+            goarch: arm64
+          - arch: x64
+            runner: macos-13
+            goarch: amd64
     steps:
       - name: 检出源码
         uses: actions/checkout@v4
+
       - name: 安装 Go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: work/importer-v2/go.sum
+
       - name: 安装 Wails CLI
         run: |
-          go install github.com/wailsapp/wails/v2/cmd/wails@${WAILS_VERSION}
+          go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-      - name: 下载 Core
+
+      - name: 编译核心
+        working-directory: work/importer-v2
         env:
-          CORE_URL: ${{ vars.GUI_CORE_MAC_ARM64_URL }}
-          CORE_SHA256: ${{ vars.GUI_CORE_MAC_ARM64_SHA256 }}
-          CORE_TOKEN: ${{ secrets.GUI_CORE_DOWNLOAD_TOKEN }}
+          GOOS: darwin
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+          VER: ${{ needs.version.outputs.ver }}
         run: |
-          if [ -z "$CORE_URL" ]; then echo "缺少仓库变量 GUI_CORE_MAC_ARM64_URL。" >&2; exit 1; fi
-          core="$RUNNER_TEMP/SteamCollectionImporterCore"
-          if [ -n "$CORE_TOKEN" ]; then curl --fail --location --retry 3 --silent --show-error -H "Authorization: Bearer $CORE_TOKEN" "$CORE_URL" -o "$core"; else curl --fail --location --retry 3 --silent --show-error "$CORE_URL" -o "$core"; fi
-          if [ -n "$CORE_SHA256" ]; then echo "$CORE_SHA256  $core" | shasum -a 256 -c -; fi
-          chmod 755 "$core"
-          echo "CORE_PATH=$core" >> "$GITHUB_ENV"
-      - name: 构建 Wails macOS ARM64
-        run: python3 scripts/build_wails_release.py --platform darwin/arm64 --core "$CORE_PATH"
+          go build -mod=vendor -trimpath \
+            -ldflags "-s -w -X main.version=$VER" \
+            -o "$RUNNER_TEMP/SteamCollectionImporterCore" .
+          ls -lh "$RUNNER_TEMP/SteamCollectionImporterCore"
+
+      - name: 构建 Wails macOS ${{ matrix.arch }}
+        env:
+          CORE_PATH: ${{ runner.temp }}/SteamCollectionImporterCore
+        run: python3 scripts/build_wails_release.py --platform "darwin/${{ matrix.goarch }}" --core "$CORE_PATH"
+
       - name: 打包 macOS App、DMG 和校验值
         run: |
+          set -e
           app="desktop-wails/build/bin/SteamCollectionImporter.app"
-          ditto -c -k --sequesterRsrc --keepParent "$app" SteamCollectionImporter-macOS-arm64.zip
-          hdiutil create -volname "Steam 收藏整理" -srcfolder "$app" -ov -format UDZO SteamCollectionImporter-macOS-arm64.dmg
-          shasum -a 256 SteamCollectionImporter-macOS-arm64.zip SteamCollectionImporter-macOS-arm64.dmg > SteamCollectionImporter-macOS-arm64.SHA256SUMS.txt
+          test -d "$app"
+          base="SteamCollectionImporter-macOS-${{ matrix.arch }}"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "$base.zip"
+          hdiutil create -volname "Steam 收藏整理" -srcfolder "$app" -ov -format UDZO "$base.dmg"
+          shasum -a 256 "$base.zip" "$base.dmg" > "$base.SHA256SUMS.txt"
+          cat "$base.SHA256SUMS.txt"
+
       - name: 上传 macOS 构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: macos-arm64
+          name: macos-${{ matrix.arch }}
           path: |
-            SteamCollectionImporter-macOS-arm64.zip
-            SteamCollectionImporter-macOS-arm64.dmg
-            SteamCollectionImporter-macOS-arm64.SHA256SUMS.txt
+            SteamCollectionImporter-macOS-${{ matrix.arch }}.zip
+            SteamCollectionImporter-macOS-${{ matrix.arch }}.dmg
+            SteamCollectionImporter-macOS-${{ matrix.arch }}.SHA256SUMS.txt
 
   release:
     name: 创建 GitHub Release
-    needs: [windows, macos]
+    needs: [version, windows, macos]
     runs-on: ubuntu-latest
     steps:
-      - name: 下载 Windows x64
+      - name: 下载全部构建产物
         uses: actions/download-artifact@v4
         with:
-          name: windows-x64
           path: assets
-      - name: 下载 Windows ARM64
-        uses: actions/download-artifact@v4
-        with:
-          name: windows-arm64
-          path: assets
-      - name: 下载 macOS ARM64
-        uses: actions/download-artifact@v4
-        with:
-          name: macos-arm64
-          path: assets
-      - name: 计算 Release 标签
-        id: release
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
-          GIT_TAG: ${{ github.ref_name }}
-          RUN_NUMBER: ${{ github.run_number }}
+          merge-multiple: true
+
+      - name: 汇总产物
         run: |
-          if [ -n "$INPUT_VERSION" ]; then tag="$INPUT_VERSION"; elif [[ "$GIT_TAG" == v* ]]; then tag="$GIT_TAG"; else tag="v0.0.0-run.$RUN_NUMBER"; fi
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "name=Steam 收藏整理工具 $tag" >> "$GITHUB_OUTPUT"
+          ls -lh assets
+          {
+            echo "## 下载"
+            echo ""
+            echo "| 平台 | 文件 |"
+            echo "|---|---|"
+            echo "| Windows x64 | \`SteamCollectionImporter-windows-x64.zip\` |"
+            echo "| Windows ARM64 | \`SteamCollectionImporter-windows-arm64.zip\` |"
+            echo "| macOS Apple Silicon | \`SteamCollectionImporter-macOS-arm64.dmg\` |"
+            echo "| macOS Intel | \`SteamCollectionImporter-macOS-x64.dmg\` |"
+            echo ""
+            echo "## 校验"
+            echo ""
+            echo "每个压缩包都附带同名 \`.SHA256SUMS.txt\`。Windows 解压后运行 \`SteamCollectionImporter.exe\`，"
+            echo "macOS 打开 DMG 把 App 拖进「应用程序」。"
+            echo ""
+            echo "## 说明"
+            echo ""
+            echo "工具通过 Steam 自带的 CEF 调试端口读取你的库并写入静态收藏，全程只连 \`127.0.0.1\`。"
+            echo "写入前会自动备份到数据目录，可用「恢复备份」回滚。动态收藏（VR、已安装、原声音轨等）只读，不会被改动。"
+            echo ""
+            echo "macOS 包为 ad-hoc 签名（未公证），首次打开如提示「无法验证开发者」，"
+            echo "在「系统设置 → 隐私与安全性」里点「仍要打开」，或执行 \`xattr -dr com.apple.quarantine /Applications/SteamCollectionImporter.app\`。"
+          } > release-notes.md
+          cat release-notes.md
+
       - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.release.outputs.tag }}
-          name: ${{ steps.release.outputs.name }}
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: Steam 收藏整理工具 ${{ needs.version.outputs.tag }}
+          body_path: release-notes.md
           generate_release_notes: true
           files: assets/*

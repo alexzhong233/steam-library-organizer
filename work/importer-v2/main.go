@@ -17,7 +17,9 @@ import (
 //go:embed bridge.js
 var bridgeSource string
 
-const version = "2.3.2"
+// version 用 var 而非 const，便于发布时用
+// -ldflags "-X main.version=v2.3.3" 注入真实 tag，保证二进制与 Release 一致。
+var version = "2.3.2"
 
 func steam64(account string) string {
 	n, e := strconv.ParseUint(account, 10, 32)
