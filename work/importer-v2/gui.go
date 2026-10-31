@@ -101,6 +101,10 @@ func runSelfTest() error {
 	}
 	return nil
 }
+// openBrowserOnStart 由 -browser 控制；桌面外壳（desktop-wails）会传 -browser=false，
+// 因为它自己开窗口加载同一个地址。
+var openBrowserOnStart = true
+
 func runGUI(m Manifest, source, plan string, port int, report string) error {
 	root, _ := steamRoot()
 	if report == "" {
@@ -576,7 +580,10 @@ func runGUI(m Manifest, source, plan string, port int, report string) error {
 	go func() { serveErr <- server.Serve(ln) }()
 	url := fmt.Sprintf("http://127.0.0.1:%d/", portNum)
 	fmt.Println("GUI:", url)
-	if e = openGUI(url); e != nil {
+	if !openBrowserOnStart {
+		// 桌面外壳自带窗口，自己会把这个地址反代进去，别再弹一个浏览器。
+		fmt.Println("界面地址（未自动打开浏览器）：", url)
+	} else if e = openGUI(url); e != nil {
 		fmt.Println("请在浏览器打开", url)
 	}
 	go func() {

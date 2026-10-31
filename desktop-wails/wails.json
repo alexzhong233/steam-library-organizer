@@ -1,0 +1,18 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "SteamCollectionImporter",
+  "outputfilename": "SteamCollectionImporter",
+  "frontend:install": "",
+  "frontend:build": "",
+  "frontend:dev:watcher": "",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "alexzhong233"
+  },
+  "info": {
+    "productName": "Steam 收藏整理",
+    "productVersion": "2.3.2",
+    "copyright": "MIT License",
+    "comments": "通过 Steam CEF 调试端口整理收藏"
+  }
+}

@@ -37,6 +37,9 @@ __pycache__/
 /dist/
 /desktop-wails/build/
 
+# 本地 Go 构建缓存（沙箱里默认的 %LOCALAPPDATA%\go-build 可能没有写权限）
+/.gocache/
+
 # 本地笔记、编辑器项目数据
 /.workbuddy/
 /AGENTS.md

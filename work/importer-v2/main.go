@@ -46,6 +46,7 @@ func main() {
 	report := flag.String("data-dir", "", "数据目录（默认在 EXE 或 macOS App 旁）")
 	check := flag.Bool("manifest-info", false, "只检查当前分类配置，不连接 Steam")
 	gui := flag.Bool("gui", true, "启动图形界面")
+	browser := flag.Bool("browser", true, "启动后自动用默认浏览器打开界面（桌面外壳会关掉它）")
 	selfTestFlag := flag.Bool("self-test", false, "运行内置自测并退出")
 	planPath := flag.String("plan", "", "显式指定分类配置 JSON；默认不加载方案")
 	flag.Parse()
@@ -71,6 +72,7 @@ func main() {
 		return
 	}
 	if *gui {
+		openBrowserOnStart = *browser
 		if err := runGUI(m, configSource, *planPath, *port, *report); err != nil {
 			fmt.Fprintln(os.Stderr, "GUI 启动失败：", err)
 			os.Exit(1)

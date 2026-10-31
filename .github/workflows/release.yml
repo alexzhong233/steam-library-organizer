@@ -211,6 +211,9 @@ jobs:
   release:
     name: 创建 GitHub Release
     needs: [version, windows, macos]
+    # 手动触发（workflow_dispatch）只用来验证整条链路能不能编译出来，
+    # 不建 Release、不打标签；只有推 v* 标签才是真的发版。
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - name: 下载全部构建产物

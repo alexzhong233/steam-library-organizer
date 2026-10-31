@@ -125,6 +125,38 @@ jobs:
         run: |
           "$RUNNER_TEMP/core" -manifest-info
 
+  desktop:
+    name: 桌面外壳（Windows）
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop-wails
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: desktop-wails/go.sum
+
+      # 外壳本身没有界面代码，全部逻辑就是把核心的网页反代进系统 WebView。
+      # 反代要改写 Host / Origin（核心只认自己的 origin），这块用单测盯住。
+      - name: go vet
+        run: go vet -tags desktop,production ./...
+
+      - name: go test
+        run: go test -tags desktop,production ./...
+
+      - name: 编译外壳
+        shell: pwsh
+        run: |
+          go build -tags desktop,production -trimpath `
+            -ldflags "-s -w -H=windowsgui" `
+            -o "$env:RUNNER_TEMP/SteamCollectionImporter.exe" .
+          Get-Item "$env:RUNNER_TEMP/SteamCollectionImporter.exe" | Select-Object Length
+
   guard:
     name: 隐私与产物检查
     runs-on: ubuntu-latest
