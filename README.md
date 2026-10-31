@@ -150,6 +150,8 @@ xattr -dr com.apple.quarantine /Applications/SteamCollectionImporter.app
 
 本仓库不包含个人 Steam 库、分类方案、价格缓存、历史备份或编译产物。
 
-构建桌面版**不需要任何额外配置**：`release.yml` 在各自平台的 runner 上直接编译核心（`CGO_ENABLED=0`），再复制进 App 的 `Resources/`，所以不存在预先上传 `GUI_CORE_*_URL` 的步骤。发版只需推一个 `v*` 标签。
+构建桌面版**不需要任何额外配置**：`release.yml` 在 Windows 与 macOS 各自的 runner 上直接用 `scripts/build_desktop.py` 编出单文件，不存在预先上传 `GUI_CORE_*_URL` 这类步骤，也不需要先准备 core 二进制。发版只需推一个 `v*` 标签。
+
+macOS 侧有两个不能省的细节（`scripts/build_desktop.py` 已经处理好，手编时要自己带上）：WKWebView 走 cgo，必须 `CGO_ENABLED=1`；wails 的文件对话框用了 `UTType`，而它的 `#cgo LDFLAGS` 没声明 `UniformTypeIdentifiers`，不补这个 framework 链接期就报 `Undefined symbols: _OBJC_CLASS_$_UTType`。最低系统版本钉在 11.0（`UTType` 与 Apple Silicon 的共同下限）。
 
 日常提交由 `.github/workflows/ci.yml` 把关：`go vet`、`go test`、桥接脚本测试、五平台交叉编译，以及一条防止个人数据入库的检查。
