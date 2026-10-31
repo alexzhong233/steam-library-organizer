@@ -72,6 +72,12 @@ jobs:
             echo "跳过：runner 无 node"
           fi
 
+      - name: 安装界面测试依赖
+        run: npm ci --no-audit --no-fund
+
+      - name: 界面交互测试
+        run: node ui_dom_test.mjs
+
   windows:
     name: Windows ${{ matrix.arch }}
     needs: [version, test]

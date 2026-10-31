@@ -101,6 +101,7 @@ func runSelfTest() error {
 	}
 	return nil
 }
+
 // openBrowserOnStart 由 -browser 控制；桌面外壳（desktop-wails）会传 -browser=false，
 // 因为它自己开窗口加载同一个地址。
 var openBrowserOnStart = true
@@ -480,6 +481,29 @@ func runGUI(m Manifest, source, plan string, port int, report string) error {
 		}
 		jsonResponse(w, map[string]any{"ok": true, "path": path})
 	})
+	// 界面偏好（主题、AI 服务地址、默认模型）。放服务端而不是只用
+	// localStorage：桌面版换 WebView 实例或清缓存后不该重新选一遍。
+	// API Key 不在其中——它只存在当前进程内存里。
+	mux.HandleFunc("/api/ui-settings", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			uiSettingsMu.Lock()
+			cur := loadUISettings(st.home)
+			uiSettingsMu.Unlock()
+			jsonResponse(w, cur)
+			return
+		}
+		var patch uiSettingsPatch
+		if e := readJSON(r, &patch); e != nil {
+			jsonResponse(w, map[string]any{"ok": false, "error": e.Error()})
+			return
+		}
+		cur, e := mergeUISettings(st.home, patch)
+		if e != nil {
+			jsonResponse(w, map[string]any{"ok": false, "error": e.Error()})
+			return
+		}
+		jsonResponse(w, map[string]any{"ok": true, "settings": cur})
+	})
 	mux.HandleFunc("/api/prices/refresh", func(w http.ResponseWriter, r *http.Request) {
 		var q struct {
 			AppIDs []int `json:"appids"`
@@ -691,6 +715,15 @@ func errText(e error) string {
 	return e.Error()
 }
 
+// guiReadOnlyAPI 是允许 GET 的接口白名单。其余 /api/ 一律只收 POST，
+// 这样跨站页面没法用一个 <img src> 或 <a> 触发写操作。
+// 新增只读接口时记得加进来，否则前端取数会拿到 405。
+var guiReadOnlyAPI = map[string]bool{
+	"/api/state":       true,
+	"/api/history":     true,
+	"/api/ui-settings": true,
+}
+
 func guiGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host, _, err := net.SplitHostPort(r.Host)
@@ -703,8 +736,9 @@ func guiGuard(next http.Handler) http.Handler {
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/") {
-			read := r.URL.Path == "/api/state" || r.URL.Path == "/api/history"
-			if read && r.Method != http.MethodGet || !read && r.Method != http.MethodPost {
+			// POST 一律允许（写操作走这里）；GET 只对只读白名单开放，
+			// 这样跨站页面没法用 <img src> 之类的 GET 去触发读取。
+			if r.Method != http.MethodPost && !(r.Method == http.MethodGet && guiReadOnlyAPI[r.URL.Path]) {
 				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 				return
 			}
