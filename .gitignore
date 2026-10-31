@@ -28,6 +28,7 @@ __pycache__/
 *.exe
 *.dmg
 *.app/
+/dist/
 /work/importer-v2/SteamCollectionImporter
 /work/importer-v2/SteamCollectionImporter-arm64.exe
 
