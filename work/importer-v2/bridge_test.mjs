@@ -2,6 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 const fn=(0,eval)('('+readFileSync(new URL('./bridge.js',import.meta.url),'utf8')+')');
+test('explicit deletion checks membership and name before removing an obsolete collection',async()=>{
+ const x=steam();x.add('old','Old',[1]);
+ await assert.rejects(fn({op:'delete',id:'old',expected_name:'Old',expected_before:[]}),/changed before deletion/);
+ assert(x.state.has('old'));
+ await assert.rejects(fn({op:'delete',id:'old',expected_name:'Other',expected_before:[1]}),/changed since backup/);
+ assert(x.state.has('old'));
+ await fn({op:'delete',id:'old',expected_name:'Old',expected_before:[1]});
+ assert(!x.state.has('old'));
+ x.add('empty','Empty',[]);await fn({op:'delete',id:'empty',expected_name:'Empty',expected_before:[]});
+ assert(!x.state.has('empty'));
+});
 function steam(){
  const catalog=new Map([1,2,3,4,99].map(id=>[id,{appid:id,display_name:'Game '+id,rt_last_time_played:id===2?12345:0}]));
  const state=new Map(),disk=new Map();let next=0,writes=0,collisionDeletes=0,deleted=[];let failSave=null;
@@ -48,3 +59,38 @@ test('snapshot reports last played and dynamic filter without changing state',as
 test('favorite recreation uses system flag API when empty view is absent',async()=>{const x=steam();x.state.delete('favorite');x.disk.delete('favorite');const r=await put('Favorites',[1,99],{id:'favorite'});assert(r.system);assert.equal(r.id,'favorite');assert.deepEqual(r.appids,[1,99]);assert.equal(x.collisionDeletes,0)});
 
 test('case-only name collision refuses replacement',async()=>{const x=steam();await assert.rejects(put('OLD',[1]),/name changed/);assert.equal(x.writes,0);assert(x.state.has('old'))});
+test('snapshot reads arbitrary user dynamic names and ignores legacy prescribed overlays without creating previews',async()=>{const x=steam();const c=x.add('custom','自定义动态收藏',[],{filterGroups:[{rgOptions:[1,2]}]});c.removed.add(2);let previews=0;const make=x.cs.NewUnsavedCollection;x.cs.NewUnsavedCollection=(...a)=>{previews++;return make(...a)};const s=await fn({op:'snapshot',overlays:[{name:'unused legacy name',filter:{filterGroups:[]}}]});assert.equal(x.writes,0);assert.equal(previews,0);assert.deepEqual(s.collections.find(c=>c.id==='custom').appids,[1]);assert.equal(s.overlay_projections,undefined)});
+test('overlay rename keeps ID, filter and manual exclusions, remains dynamic',async()=>{const x=steam();const filter={filterGroups:[{rgOptions:[1,2]}]};const c=x.add('adult','色情内容',[],filter);c.removed.add(2);const r=await put('00-01｜色情内容',[1],{id:'adult',expected_name:'色情内容',expected_before:[1],overlay:true,restore_dynamic:true,filter});assert.equal(r.id,'adult');assert(r.dynamic);assert.deepEqual([...x.state.get('adult').removed],[2]);assert.equal(x.collisionDeletes,0)});
+test('new overlay is saved as dynamic and can overlap a static primary',async()=>{const x=steam();const filter={filterGroups:[{rgOptions:[1,2]}]};const r=await put('00-03｜VR 游戏',[1,2],{overlay:true,restore_dynamic:true,filter});assert(r.dynamic);assert.deepEqual(r.appids,[1,2]);assert(x.state.get('old').allApps.some(a=>a.appid===1));x.restart();assert(x.state.get(r.id).bIsDynamic)});
+test('recovery can restore a renamed dynamic overlay to its old static kind',async()=>{const x=steam();const filter={filterGroups:[{rgOptions:[1,2]}]};x.add('a','00-03｜VR 游戏',[],filter);const r=await put('Old VR',[1,2],{id:'a',expected_name:'00-03｜VR 游戏',expected_before:[1,2],recovery:true,freeze_dynamic:true});assert(!r.dynamic);assert.equal(r.name,'Old VR');assert.equal(x.collisionDeletes,0)});
+
+function freeLicenseService(x,{paid=[],master=[],result=1}={}){
+ const cancelled=[],unregistered=[];
+ globalThis.SteamClient={Apps:{RegisterForAppDetails(id,callback){queueMicrotask(()=>callback({unAppID:id,bFreeRemovableLicense:!paid.includes(id),unMasterSubAppID:master.includes(id)?99:0,bIsSubscribedTo:true}));return{unregister(){unregistered.push(id)}}}}};
+ const service={async CancelLicenseForApp(transport,body){assert.equal(transport,'test-transport');cancelled.push(body.appid);return{GetEResult:()=>result}}};
+ function moduleFactory(){/* CUserAccount_CancelLicenseForApp_Request UserAccount.CancelLicenseForApp#1 */}
+ const require=()=>({randomMinifiedExport:service});require.m={randomModuleNumber:moduleFactory};
+ globalThis.webpackChunksteamui=[];globalThis.webpackChunksteamui.push=chunk=>{chunk[2](require)};
+ globalThis.appDetailsStore={CMInterface(){return{GetServiceTransport(){return 'test-transport'}}}};
+ return {cancelled,unregistered};
+}
+test('free license preview is read-only and uses native paid/master evidence',async()=>{
+ const x=steam(),s=freeLicenseService(x,{paid:[3],master:[4]});
+ const r=await fn({op:'removal-check',appids:[1,3,4]});
+ assert(r.items[0].free_removable);assert(!r.items[1].free_removable);assert.equal(r.items[2].master_appid,99);
+ assert.deepEqual(s.cancelled,[]);assert.equal(s.unregistered.length,3);assert.equal(x.writes,0);
+});
+test('native cancellation refuses unconfirmed paid master or played games and never edits collections',async()=>{
+ for(const kind of ['confirmation','paid','master','played','success','server failure']){
+  const x=steam(),s=freeLicenseService(x,{paid:kind==='paid'?[1]:[],master:kind==='master'?[1]:[],result:kind==='server failure'?2:1});
+  const arg={op:'remove-free-app',appid:kind==='played'?2:1,confirm:kind==='confirmation'?'':'REMOVE_FREE_APP'};
+  if(kind==='success'){assert((await fn(arg)).removed);assert.deepEqual(s.cancelled,[1])}
+  else {await assert.rejects(fn(arg));assert.equal(s.cancelled.length,kind==='server failure'?1:0)}
+  assert.equal(x.writes,0);assert.deepEqual(ids(x.state.get('old')),[1,2,99]);
+ }
+});
+test('snapshot preserves missing versus zero playtime',async()=>{
+ const x=steam();x.catalog.get(1).minutes_playtime_forever=0;x.catalog.get(2).minutes_playtime_forever=75;
+ const s=await fn({op:'snapshot'});
+ assert.equal(s.apps.find(a=>a.appid===1).playtime_minutes,0);assert.equal(s.apps.find(a=>a.appid===2).playtime_minutes,75);assert(!('playtime_minutes' in s.apps.find(a=>a.appid===3)));
+});

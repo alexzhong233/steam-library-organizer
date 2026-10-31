@@ -118,4 +118,7 @@ func requestShutdown(root string) error {
 	return c.Process.Release()
 }
 func openFolder(p string) error { return exec.Command("explorer.exe", p).Start() }
-func platformCheck() error      { return nil }
+func openGUI(url string) error {
+	return exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", url).Start()
+}
+func platformCheck() error { return nil }

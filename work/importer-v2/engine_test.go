@@ -65,6 +65,13 @@ func (f *memoryEvaluator) Eval(arg, out any) error {
 			} else {
 				f.State.Collections[i] = c
 			}
+			for j := range f.State.Projections {
+				if f.State.Projections[j].Name == c.Name {
+					f.State.Projections[j].SourceID = c.ID
+					f.State.Projections[j].AppIDs = c.AppIDs
+					f.State.Projections[j].Filter = c.Filter
+				}
+			}
 			result = c
 		}
 	}

@@ -10,21 +10,38 @@ import (
 )
 
 type Game struct {
-	AppID    int    `json:"appid"`
-	Name     string `json:"name"`
-	Target   string `json:"target"`
-	Priority int    `json:"priority"`
+	Publishers             []string `json:"publishers,omitempty"`
+	Developers             []string `json:"developers,omitempty"`
+	AppID                  int      `json:"appid"`
+	Name                   string   `json:"name"`
+	Target                 string   `json:"target"`
+	Priority               int      `json:"priority"`
+	KeepPrimary            bool     `json:"keep_primary"`
+	Protect                bool     `json:"protect"`
+	ProtectionReasons      []string `json:"protection_reasons,omitempty"`
+	QualityIndie           bool     `json:"quality_indie"`
+	LowValue               bool     `json:"low_value"`
+	FreeCandidate          bool     `json:"free_candidate"`
+	FutureAvailabilityRisk string   `json:"future_availability_risk,omitempty"`
+	PlayedTarget           string   `json:"played_target,omitempty"`
+	DynamicOnlyIfMatched   bool     `json:"dynamic_only_if_matched"`
+	Reason                 string   `json:"reason,omitempty"`
+	Series                 string   `json:"series,omitempty"`
 }
 type Manifest struct {
-	Schema       int    `json:"schema"`
-	ResearchDate string `json:"research_date"`
-	GameCount    int    `json:"game_count"`
-	Games        []Game `json:"games"`
+	CollectionState *Snapshot `json:"collection_state,omitempty"`
+	Schema          int       `json:"schema"`
+	ResearchDate    string    `json:"research_date"`
+	GameCount       int       `json:"game_count"`
+	Games           []Game    `json:"games"`
+	Overlays        []Overlay `json:"overlays,omitempty"`
+	CollectionOrder []string  `json:"collection_order,omitempty"`
 }
 type App struct {
-	AppID      int    `json:"appid"`
-	Name       string `json:"name"`
-	LastPlayed int64  `json:"last_played"`
+	AppID           int    `json:"appid"`
+	Name            string `json:"name"`
+	LastPlayed      int64  `json:"last_played"`
+	PlaytimeMinutes *int64 `json:"playtime_minutes,omitempty"`
 }
 type Collection struct {
 	ID              string          `json:"id"`
@@ -44,9 +61,13 @@ type Snapshot struct {
 	Account     string       `json:"account"`
 	Apps        []App        `json:"apps"`
 	Collections []Collection `json:"collections"`
+	Projections []Projection `json:"overlay_projections,omitempty"`
 }
 type Action struct {
 	Phase           string          `json:"phase"`
+	Overlay         bool            `json:"overlay,omitempty"`
+	BeforeName      string          `json:"before_name,omitempty"`
+	Recovery        bool            `json:"recovery,omitempty"`
 	ID              string          `json:"id,omitempty"`
 	Name            string          `json:"name"`
 	Before          []int           `json:"before"`
@@ -58,40 +79,27 @@ type Action struct {
 	ExplicitRemoved []int           `json:"explicit_removed,omitempty"`
 }
 type Preview struct {
-	Schema        int            `json:"schema"`
-	Account       string         `json:"account"`
-	ManifestHash  string         `json:"manifest_sha256"`
-	Pilot         bool           `json:"pilot"`
-	ManifestCount int            `json:"manifest_count"`
-	LibraryCount  int            `json:"library_count"`
-	FoundTotal    int            `json:"found_total"`
-	ScopeCount    int            `json:"scope_count"`
-	Missing       []Game         `json:"missing"`
-	Promoted      []int          `json:"played_promoted_appids"`
-	Unresolved    int            `json:"unresolved_availability"`
-	Targets       map[int]string `json:"effective_targets"`
-	Actions       []Action       `json:"actions"`
-	Blocked       []string       `json:"blocked"`
-	Fingerprint   string         `json:"snapshot_fingerprint"`
+	CollectionState *Snapshot      `json:"collection_state,omitempty"`
+	Schema          int            `json:"schema"`
+	OverlaySpecs    []Overlay      `json:"overlay_specs,omitempty"`
+	DynamicOnly     []int          `json:"dynamic_only_appids,omitempty"`
+	FreeCandidates  []int          `json:"free_candidate_appids,omitempty"`
+	Account         string         `json:"account"`
+	ManifestHash    string         `json:"manifest_sha256"`
+	Pilot           bool           `json:"pilot"`
+	ManifestCount   int            `json:"manifest_count"`
+	LibraryCount    int            `json:"library_count"`
+	FoundTotal      int            `json:"found_total"`
+	ScopeCount      int            `json:"scope_count"`
+	Missing         []Game         `json:"missing"`
+	Promoted        []int          `json:"played_promoted_appids"`
+	Unresolved      int            `json:"unresolved_availability"`
+	Targets         map[int]string `json:"effective_targets"`
+	Actions         []Action       `json:"actions"`
+	Blocked         []string       `json:"blocked"`
+	Fingerprint     string         `json:"snapshot_fingerprint"`
 }
 
-func manifest() (Manifest, error) {
-	var m Manifest
-	if err := json.Unmarshal(manifestBytes, &m); err != nil {
-		return m, err
-	}
-	seen := map[int]bool{}
-	for _, g := range m.Games {
-		if g.AppID <= 0 || seen[g.AppID] || strings.TrimSpace(g.Target) == "" {
-			return m, fmt.Errorf("分类清单无效或 AppID 重复")
-		}
-		seen[g.AppID] = true
-	}
-	if m.Schema != 1 || len(seen) != m.GameCount || m.GameCount != len(m.Games) {
-		return m, fmt.Errorf("分类清单数量/格式不符")
-	}
-	return m, nil
-}
 func digest(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
 func normIDs(xs []int) []int {
 	m := map[int]bool{}
@@ -150,8 +158,12 @@ func fingerprint(s Snapshot) string {
 	}{s.Account, normIDs(ids), cs})
 	return digest(b)
 }
+func manifestDigest(m Manifest) string { b, _ := json.Marshal(m); return digest(b) }
 func buildPreview(m Manifest, s Snapshot, pilot bool) Preview {
-	p := Preview{Schema: 1, Account: s.Account, ManifestHash: digest(manifestBytes), Pilot: pilot, ManifestCount: m.GameCount, Targets: map[int]string{}, Actions: []Action{}, Missing: []Game{}, Promoted: []int{}, Blocked: []string{}, Fingerprint: fingerprint(s)}
+	if m.CollectionState != nil {
+		return buildCollectionPreview(m, s)
+	}
+	p := Preview{Schema: 2, OverlaySpecs: m.Overlays, Account: s.Account, ManifestHash: manifestDigest(m), Pilot: pilot, ManifestCount: m.GameCount, Targets: map[int]string{}, Actions: []Action{}, Missing: []Game{}, Promoted: []int{}, Blocked: []string{}, Fingerprint: fingerprint(s)}
 	library := map[int]App{}
 	for _, a := range s.Apps {
 		library[a.AppID] = a
@@ -168,11 +180,12 @@ func buildPreview(m Manifest, s Snapshot, pilot bool) Preview {
 	if s.Account == "" || s.Account == "0" {
 		p.Blocked = append(p.Blocked, "未能确认 Windows Steam 当前账号，未启用写入。")
 	}
+	simulated, overlayMembership := prepareOverlays(m, s, &p)
 	games := m.Games
 	if pilot {
 		games = []Game{}
 		for _, g := range m.Games {
-			if g.Target == "系列｜Call of Duty（使命召唤）" {
+			if strings.Contains(g.Target, "Call of Duty") {
 				games = append(games, g)
 			}
 		}
@@ -188,9 +201,27 @@ func buildPreview(m Manifest, s Snapshot, pilot bool) Preview {
 			continue
 		}
 		t := g.Target
+		if t == "未分类" {
+			t = ""
+		}
+		if g.Protect && g.FreeCandidate {
+			t = "免费保护｜禁止移除"
+		}
 		if g.Priority == 4 && a.LastPlayed > 0 {
-			t = "免费绝版/游玩游戏"
+			if g.PlayedTarget != "" {
+				t = g.PlayedTarget
+			} else {
+				t = "待核实｜玩法类型"
+			}
 			p.Promoted = append(p.Promoted, g.AppID)
+		}
+		candidate := g.FreeCandidate && !g.Protect && a.LastPlayed <= 0
+		if candidate {
+			p.FreeCandidates = append(p.FreeCandidates, g.AppID)
+		}
+		if !candidate && !g.LowValue && !g.KeepPrimary && !g.Protect && !g.QualityIndie && g.DynamicOnlyIfMatched && len(overlayMembership[g.AppID]) > 0 {
+			t = ""
+			p.DynamicOnly = append(p.DynamicOnly, g.AppID)
 		}
 		p.Targets[g.AppID] = t
 		if g.Priority == 0 {
@@ -200,16 +231,35 @@ func buildPreview(m Manifest, s Snapshot, pilot bool) Preview {
 	p.ScopeCount = len(p.Targets)
 	want := map[string][]int{}
 	for id, t := range p.Targets {
+		if t == "" {
+			continue
+		}
 		want[t] = append(want[t], id)
 	}
 	names := []string{}
 	for n := range want {
 		names = append(names, n)
 	}
-	sort.Strings(names)
+	order := map[string]int{}
+	for i, n := range m.CollectionOrder {
+		order[n] = i
+	}
+	sort.Slice(names, func(i, j int) bool {
+		ai, oki := order[names[i]]
+		aj, okj := order[names[j]]
+		if oki && okj {
+			return ai < aj
+		}
+		if oki {
+			return true
+		}
+		if okj {
+			return false
+		}
+		return names[i] < names[j]
+	})
 	// Simulate additive target creation first, so no game loses its old home
 	// before its target exists. Placeholder ids are resolved by exact name later.
-	simulated := append([]Collection{}, s.Collections...)
 	for _, name := range names {
 		for _, c := range simulated {
 			if !c.System && c.Name != name && strings.EqualFold(c.Name, name) {
@@ -232,18 +282,14 @@ func buildPreview(m Manifest, s Snapshot, pilot bool) Preview {
 			continue
 		}
 		c := simulated[idx]
+		if c.Dynamic {
+			p.Blocked = append(p.Blocked, "目标收藏“"+name+"”是用户动态收藏；请在 Steam 创建同名静态收藏或修改导入目标")
+			continue
+		}
 		after := union(c.AppIDs, want[name])
-		if !sameIDs(c.AppIDs, after) || c.Dynamic {
+		if !sameIDs(c.AppIDs, after) {
 			p.Actions = append(p.Actions, Action{Phase: "ensure_target", ID: c.ID, Name: name, Before: normIDs(c.AppIDs), After: after, Freeze: c.Dynamic, Filter: c.Filter, ExplicitAdded: c.ExplicitAdded, ExplicitRemoved: c.ExplicitRemoved})
-			if c.Dynamic {
-				if !c.Deletable || !c.FilterCaptured {
-					p.Blocked = append(p.Blocked, "动态收藏不能安全备份/转换："+c.Name)
-				}
-				c.Dynamic = false
-				c.ID = "@new:" + name
-				c.Editable = true
-				c.Filter = nil
-			} else if !c.Editable {
+			if !c.Editable {
 				p.Blocked = append(p.Blocked, "目标收藏不可编辑："+name)
 			}
 			c.AppIDs = after
@@ -251,6 +297,9 @@ func buildPreview(m Manifest, s Snapshot, pilot bool) Preview {
 		}
 	}
 	for _, c := range simulated {
+		if c.Dynamic {
+			continue
+		}
 		if c.System && c.ID != "favorite" {
 			continue
 		}
@@ -297,38 +346,74 @@ type Audit struct {
 	Verified         []int            `json:"verified"`
 	Problems         map[int][]string `json:"problems"`
 	OutsideUnchanged bool             `json:"outside_unchanged"`
+	OverlayProblems  []string         `json:"overlay_problems"`
 }
 
-func audit(s Snapshot, targets map[int]string, before *Snapshot) Audit {
-	a := Audit{Scope: len(targets), Verified: []int{}, Problems: map[int][]string{}, OutsideUnchanged: true}
-	found := map[int][]string{}
+func audit(s Snapshot, targets map[int]string, before *Snapshot, policies ...[]Overlay) Audit {
+	defs := []Overlay{}
+	if len(policies) > 0 {
+		defs = policies[0]
+	}
+	a := Audit{Scope: len(targets), Verified: []int{}, Problems: map[int][]string{}, OutsideUnchanged: true, OverlayProblems: []string{}}
+	_ = defs // Legacy manifest overlay definitions are accepted for import only.
+	allowed := map[string]bool{}
+	for _, c := range s.Collections {
+		if c.Dynamic && !c.System {
+			allowed[c.ID] = true
+		}
+	}
+	ordinary := map[int][]string{}
+	over := map[int][]string{}
 	for _, c := range s.Collections {
 		if c.System && c.ID != "favorite" {
 			continue
 		}
 		for _, id := range c.AppIDs {
-			if _, ok := targets[id]; ok {
-				found[id] = append(found[id], c.Name)
+			if _, in := targets[id]; !in {
+				continue
+			}
+			if allowed[c.ID] {
+				over[id] = append(over[id], c.Name)
+			} else {
+				ordinary[id] = append(ordinary[id], c.Name)
 			}
 		}
 	}
 	for id, w := range targets {
-		cs := found[id]
-		if len(cs) == 1 && cs[0] == w {
+		cs := ordinary[id]
+		ok := len(cs) == 1 && cs[0] == w
+		if w == "" {
+			ok = len(cs) == 0
+		}
+		if ok {
 			a.Verified = append(a.Verified, id)
 		} else {
-			a.Problems[id] = append([]string{"expected: " + w}, cs...)
+			a.Problems[id] = append([]string{"expected primary: " + w}, cs...)
 		}
 	}
 	if before != nil {
-		// Compare all memberships outside scope by collection NAME, allowing only
-		// the ID change required by an explicitly recorded dynamic conversion.
+		live := map[string]Collection{}
+		for _, c := range s.Collections {
+			live[c.ID] = c
+		}
+		for _, c := range before.Collections {
+			if !c.Dynamic {
+				continue
+			}
+			after, ok := live[c.ID]
+			if !ok || !after.Dynamic || after.Name != c.Name || !sameFilter(after.Filter, c.Filter) || !sameIDs(after.AppIDs, c.AppIDs) {
+				a.OverlayProblems = append(a.OverlayProblems, "用户动态收藏发生变化："+c.Name)
+			}
+		}
 		signature := func(s Snapshot) string {
 			rows := []string{}
 			for _, c := range s.Collections {
+				if c.Dynamic {
+					continue
+				}
 				for _, id := range c.AppIDs {
 					if _, in := targets[id]; !in || c.System && c.ID != "favorite" {
-						rows = append(rows, fmt.Sprintf("%s\x00%s\x00%d", c.Name, fmt.Sprint(c.System), id))
+						rows = append(rows, fmt.Sprintf("%s\x00%v\x00%d", c.Name, c.System, id))
 					}
 				}
 			}

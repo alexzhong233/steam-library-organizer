@@ -17,10 +17,7 @@ import (
 //go:embed bridge.js
 var bridgeSource string
 
-//go:embed classification.example.json
-var manifestBytes []byte
-
-const version = "1.0.0-preview"
+const version = "2.3.2"
 
 func steam64(account string) string {
 	n, e := strconv.ParseUint(account, 10, 32)
@@ -44,10 +41,13 @@ func main() {
 	initConsole()
 	rootOpt := flag.String("steam-root", "", "Steam 安装目录（默认自动检测）")
 	port := flag.Int("port", 8080, "本机 Steam CEF 端口，通常 8080")
-	report := flag.String("data-dir", "", "报告目录（默认在 exe 旁 SteamImporterData）")
-	check := flag.Bool("manifest-info", false, "只检查内置清单，不连接 Steam")
+	report := flag.String("data-dir", "", "数据目录（默认在 EXE 或 macOS App 旁）")
+	check := flag.Bool("manifest-info", false, "只检查当前分类配置，不连接 Steam")
+	gui := flag.Bool("gui", true, "启动图形界面")
+	selfTestFlag := flag.Bool("self-test", false, "运行内置自测并退出")
+	planPath := flag.String("plan", "", "显式指定分类配置 JSON；默认不加载方案")
 	flag.Parse()
-	m, e := manifest()
+	m, configSource, e := loadConfiguredManifest(*planPath)
 	if e != nil {
 		fmt.Println(e)
 		return
@@ -57,11 +57,26 @@ func main() {
 		for _, g := range m.Games {
 			names[g.Target] = true
 		}
-		fmt.Printf("v%s: %d games, %d collections, researched %s, SHA256 %s\n", version, m.GameCount, len(names), m.ResearchDate, digest(manifestBytes))
+		fmt.Printf("v%s: %d games, %d collections, researched %s, SHA256 %s\n", version, m.GameCount, len(names), m.ResearchDate, manifestDigest(m))
 		return
 	}
-	fmt.Printf("Steam 收藏整理工具 v%s\n内置：%d 款；资料日期：%s；中国大陆区。\n", version, m.GameCount, m.ResearchDate)
-	fmt.Println("本版本已做模拟测试，尚未在 Windows Steam 实机验证。先执行 5 款试运行。")
+	if *selfTestFlag {
+		if err := runSelfTest(); err != nil {
+			fmt.Println("自测失败：", err)
+			os.Exit(1)
+		}
+		fmt.Println("自测通过")
+		return
+	}
+	if *gui {
+		if err := runGUI(m, configSource, *planPath, *port, *report); err != nil {
+			fmt.Fprintln(os.Stderr, "GUI 启动失败：", err)
+			os.Exit(1)
+		}
+		return
+	}
+	fmt.Println("当前分类配置：", configSource)
+	fmt.Printf("Steam 收藏整理工具 v%s\n方案：%d 款；资料日期：%s。\n", version, m.GameCount, m.ResearchDate)
 	if e = platformCheck(); e != nil {
 		fmt.Println(e)
 		return
@@ -98,7 +113,7 @@ func main() {
 	}
 	home := *report
 	if home == "" {
-		home = filepath.Join(filepath.Dir(exe), "SteamImporterData")
+		home = toolDirectory(exe)
 	}
 	home, e = filepath.Abs(home)
 	if e != nil {
@@ -110,7 +125,7 @@ func main() {
 	}
 	fmt.Println("报告/备份：", home)
 	for {
-		fmt.Println("\n1 准备连接（正常重启 Steam；先退出正在运行的游戏）\n2 预览 5 款使命召唤\n3 执行 5 款试运行\n4 预览全库分类\n5 执行全库分类\n6 验证上次执行结果（重启后也用它）\n7 恢复备份（可选历史备份）\n8 打开报告与备份目录\n9 正常重启 Steam，关闭调试入口\n0 退出")
+		fmt.Println("\n1 准备连接（正常重启 Steam；先退出正在运行的游戏）\n2 预览 5 款使命召唤\n3 执行 5 款试运行\n4 预览全库分类\n5 执行全库分类\n6 验证上次执行结果（重启后也用它）\n7 恢复备份（可选历史备份）\n8 打开报告与备份目录\n9 正常重启 Steam，关闭调试入口\n10 导出游戏列表、收藏与可编辑分类配置\n11 离线读取本机 Steam 收藏缓存\n12 导出免费移除候选与保护清单（只读）\n0 退出")
 		choice := readLine("选择：")
 		if choice == "0" {
 			return
@@ -134,7 +149,24 @@ func main() {
 			}
 			continue
 		}
-		if choice != "2" && choice != "3" && choice != "4" && choice != "5" && choice != "6" && choice != "7" {
+		if choice == "11" {
+			account, er := currentAccount()
+			if er != nil {
+				account = ""
+			}
+			v := readLine("Steam userdata 数字账号目录 ID（回车使用 " + account + "）：")
+			if v != "" {
+				account = v
+			}
+			dir, er := ExportCache(root, account, home, m)
+			if er != nil {
+				fmt.Println("读取失败：", er)
+			} else {
+				fmt.Println("离线缓存已导出：", dir, "（动态成员和完整拥有列表请用在线导出）")
+			}
+			continue
+		}
+		if choice != "2" && choice != "3" && choice != "4" && choice != "5" && choice != "6" && choice != "7" && choice != "10" && choice != "12" {
 			fmt.Println("请输入菜单数字")
 			continue
 		}
@@ -143,7 +175,7 @@ func main() {
 			fmt.Println(err)
 			continue
 		}
-		engine := Engine{Eval: c, Root: root, Home: home}
+		engine := Engine{Eval: c, Root: root, Home: home, Overlays: m.Overlays}
 		switch choice {
 		case "2", "4":
 			var s Snapshot
@@ -160,17 +192,35 @@ func main() {
 			var dir string
 			dir, err = engine.Apply(m, choice == "3", func(p Preview) bool {
 				summary(p)
-				fmt.Println("将清单内游戏放入唯一目标收藏，并移出其他用户收藏及最爱。受影响的动态收藏会转换成静态，其他游戏当前归属保留。")
+				fmt.Println("动态收藏由用户在 Steam 维护，工具只读取并保留。低价值游戏命中动态收藏仍保留静态目标；本次只修改清单内游戏的静态收藏归属。")
 				return readLine("先保存自动备份再执行。输入 APPLY 继续：") == "APPLY"
 			})
 			if dir != "" {
 				fmt.Println("本次备份：", dir)
+			}
+		case "10":
+			var dir string
+			dir, err = engine.ExportLibrary(m)
+			if dir != "" {
+				fmt.Println("游戏列表与收藏已导出：", dir)
+			}
+		case "12":
+			var dir string
+			dir, err = engine.ExportRemovalReview(m)
+			if dir != "" {
+				fmt.Println("移除候选/保护报告：", dir, "（没有移除任何许可证）")
 			}
 		case "6":
 			err = verifyLast(&engine)
 		case "7":
 			var path string
 			path, err = engine.LastBackup()
+			if err != nil {
+				path = strings.Trim(readLine("没有最近备份；输入要恢复的 backup.json 完整路径（回车取消）："), "\"")
+				if path != "" {
+					err = nil
+				}
+			}
 			if err == nil {
 				fmt.Println("最近备份：", path)
 				other := readLine("回车使用最近备份；或输入其他 backup.json 的完整路径：")
@@ -264,12 +314,12 @@ func verifyLast(e *Engine) error {
 	if s.Account != b.Account {
 		return fmt.Errorf("账号与上次执行不符")
 	}
-	a := audit(s, b.Preview.Targets, &b.Snapshot)
+	a := auditPreview(s, b.Preview, &b.Snapshot)
 	if err = writeJSON(filepath.Join(e.Home, "last-verification.json"), map[string]any{"checked_at": time.Now().Format(time.RFC3339), "backup": path, "audit": a}); err != nil {
 		return err
 	}
-	fmt.Printf("重新读取当前 Steam：%d/%d 款唯一归属正确；清单外成员关系未变=%v\n", len(a.Verified), a.Scope, a.OutsideUnchanged)
-	if len(a.Problems) > 0 || !a.OutsideUnchanged {
+	fmt.Printf("重新读取当前 Steam：%d/%d 款主收藏/动态例外正确；清单外普通收藏成员关系未变=%v\n", len(a.Verified), a.Scope, a.OutsideUnchanged)
+	if len(a.Problems) > 0 || len(a.OverlayProblems) > 0 || !a.OutsideUnchanged {
 		return fmt.Errorf("验证未通过，查看 last-verification.json")
 	}
 	fmt.Println("本次检查通过。如果此前已正常重启，此结果同时确认了重启后的归属。完成后可用菜单 9 关闭调试入口。")

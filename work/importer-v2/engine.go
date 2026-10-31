@@ -16,6 +16,7 @@ type Engine struct {
 	Root          string
 	Home          string
 	Account       string
+	Overlays      []Overlay
 	AccountReader func() (string, error)
 }
 type Backup struct {
@@ -77,7 +78,7 @@ func (e *Engine) readAccount() (string, error) {
 }
 func (e *Engine) Snapshot() (Snapshot, error) {
 	var s Snapshot
-	if err := e.Eval.Eval(map[string]any{"op": "snapshot"}, &s); err != nil {
+	if err := e.Eval.Eval(map[string]any{"op": "snapshot", "overlays": e.Overlays}, &s); err != nil {
 		return s, err
 	}
 	current, err := e.readAccount()
@@ -172,9 +173,9 @@ func (e *Engine) Apply(m Manifest, pilot bool, confirm func(Preview) bool) (stri
 		return "", fmt.Errorf("预检未通过：%s", strings.Join(p.Blocked, "；"))
 	}
 	if len(p.Actions) == 0 {
-		a := audit(before, p.Targets, nil)
+		a := auditPreview(before, p, nil)
 		writeJSON(filepath.Join(e.Home, "last-audit.json"), a)
-		if len(a.Problems) > 0 {
+		if len(a.Problems) > 0 || len(a.OverlayProblems) > 0 {
 			return "", errors.New("没有可执行操作，但唯一归属审计未通过")
 		}
 		fmt.Println("所有已找到的清单游戏已符合目标，无需写入。")
@@ -211,6 +212,9 @@ func (e *Engine) Apply(m Manifest, pilot bool, confirm func(Preview) bool) (stri
 	if err = writeJSON(filepath.Join(e.Home, "last-run.json"), map[string]string{"backup": path, "account": e.Account}); err != nil {
 		return dir, err
 	}
+	if _, err = saveHistory(e.Home, "修改前的 Steam 收藏 · "+e.Account, "collections", "collections.json", before); err != nil {
+		return dir, fmt.Errorf("历史备份失败，未修改 Steam：%w", err)
+	}
 	for i, act := range p.Actions {
 		fmt.Printf("[%d/%d] %s %s（%d → %d 款）\n", i+1, len(p.Actions), act.Phase, act.Name, len(act.Before), len(act.After))
 		if cur, er := e.readAccount(); er != nil || cur != b.Account {
@@ -242,12 +246,12 @@ func (e *Engine) Apply(m Manifest, pilot bool, confirm func(Preview) bool) (stri
 		writeJSON(path, b)
 		return dir, err
 	}
-	a := audit(after, p.Targets, &before)
+	a := auditPreview(after, p, &before)
 	if err = writeJSON(filepath.Join(dir, "audit.json"), a); err != nil {
 		return dir, err
 	}
 	writeJSON(filepath.Join(e.Home, "last-audit.json"), a)
-	if len(a.Problems) > 0 || !a.OutsideUnchanged {
+	if len(a.Problems) > 0 || len(a.OverlayProblems) > 0 || !a.OutsideUnchanged {
 		b.Status = "audit_failed"
 		writeJSON(path, b)
 		return dir, fmt.Errorf("保存后审计未通过（%d 款归属问题，清单外未变=%v）。不要宣称完成；查看 audit.json 或恢复", len(a.Problems), a.OutsideUnchanged)
@@ -256,7 +260,7 @@ func (e *Engine) Apply(m Manifest, pilot bool, confirm func(Preview) bool) (stri
 	if err = writeJSON(path, b); err != nil {
 		return dir, err
 	}
-	fmt.Printf("当前 Steam 内存状态验证：%d/%d 款唯一归属正确；清单外成员关系未变。\n", len(a.Verified), a.Scope)
+	fmt.Printf("当前 Steam 内存状态验证：%d/%d 款主收藏/动态例外正确；清单外普通收藏成员关系未变。\n", len(a.Verified), a.Scope)
 	fmt.Println("仍需正常重启 Steam、等待同步，然后用菜单 6 检查持久化。获取状态待核实的游戏仍放在临时收藏。")
 	return dir, nil
 }
@@ -272,11 +276,16 @@ func equalTargets(a, b map[int]string) bool {
 	return true
 }
 func (e *Engine) put(a Action, run string, seq int) (Collection, error) {
+	if a.Phase == "delete_collection" {
+		var result any
+		err := e.Eval.Eval(map[string]any{"op": "delete", "id": a.ID, "expected_name": a.Name, "expected_before": a.Before}, &result)
+		return Collection{ID: a.ID, Name: a.Name, AppIDs: []int{}}, err
+	}
 	id := a.ID
 	if strings.HasPrefix(id, "@new:") {
 		id = ""
 	}
-	arg := map[string]any{"op": "put", "id": id, "name": a.Name, "expected_before": a.Before, "appids": a.After, "run_id": run, "sequence": seq, "restore_dynamic": a.RestoreDynamic, "filter": a.Filter, "explicit_added": a.ExplicitAdded, "explicit_removed": a.ExplicitRemoved, "freeze_dynamic": a.Freeze}
+	arg := map[string]any{"op": "put", "id": id, "name": a.Name, "expected_before": a.Before, "appids": a.After, "run_id": run, "sequence": seq, "restore_dynamic": a.RestoreDynamic, "filter": a.Filter, "explicit_added": a.ExplicitAdded, "explicit_removed": a.ExplicitRemoved, "freeze_dynamic": a.Freeze, "overlay": a.Overlay, "expected_name": a.BeforeName, "recovery": a.Recovery}
 	var c Collection
 	err := e.Eval.Eval(arg, &c)
 	return c, err
@@ -296,6 +305,9 @@ func (e *Engine) LastBackup() (string, error) {
 	return r["backup"], nil
 }
 func (e *Engine) Restore(path string, confirm func(Backup) bool) error {
+	savedOverlays := e.Overlays
+	e.Overlays = nil
+	defer func() { e.Overlays = savedOverlays }()
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -328,6 +340,9 @@ func (e *Engine) Restore(path string, confirm func(Backup) bool) error {
 	touchedIDs := map[string]bool{}
 	for _, j := range b.Journal {
 		touched[j.Action.Name] = true
+		if j.Action.BeforeName != "" {
+			touched[j.Action.BeforeName] = true
+		}
 		if j.Action.ID != "" {
 			touchedIDs[j.Action.ID] = true
 		}
@@ -388,10 +403,16 @@ func (e *Engine) Restore(path string, confirm func(Backup) bool) error {
 			before = found.AppIDs
 			id = found.ID
 		}
-		if found != nil && !old.Dynamic && !found.Dynamic && sameIDs(before, old.AppIDs) {
+		if found != nil && found.Name == old.Name && !old.Dynamic && !found.Dynamic && sameIDs(before, old.AppIDs) {
 			continue
 		}
-		a := Action{Name: old.Name, ID: id, Before: before, After: old.AppIDs, RestoreDynamic: old.Dynamic, Filter: old.Filter, ExplicitAdded: old.ExplicitAdded, ExplicitRemoved: old.ExplicitRemoved}
+		beforeName := ""
+		freeze := false
+		if found != nil {
+			beforeName = found.Name
+			freeze = found.Dynamic
+		}
+		a := Action{Name: old.Name, BeforeName: beforeName, Recovery: true, Freeze: freeze, ID: id, Before: before, After: old.AppIDs, RestoreDynamic: old.Dynamic, Filter: old.Filter, ExplicitAdded: old.ExplicitAdded, ExplicitRemoved: old.ExplicitRemoved}
 		fmt.Println("恢复收藏：", old.Name)
 		if _, err = e.put(a, "restore_"+b.RunID, seq); err != nil {
 			return fmt.Errorf("恢复中断，恢复前快照在 %s：%w", recovery, err)
@@ -431,7 +452,7 @@ func (e *Engine) Restore(path string, confirm func(Backup) bool) error {
 		}
 		ok := false
 		for _, c := range final.Collections {
-			if (c.ID == old.ID || c.Name == old.Name) && c.Dynamic == old.Dynamic && sameIDs(c.AppIDs, old.AppIDs) && (!old.Dynamic || sameFilter(c.Filter, old.Filter)) {
+			if c.Name == old.Name && c.Dynamic == old.Dynamic && sameIDs(c.AppIDs, old.AppIDs) && (!old.Dynamic || sameFilter(c.Filter, old.Filter)) {
 				ok = true
 				break
 			}
@@ -450,6 +471,7 @@ func (e *Engine) Restore(path string, confirm func(Backup) bool) error {
 	return nil
 }
 func summary(p Preview) {
+	fmt.Printf("三个动态收藏允许重叠；仅动态归属 %d 款；免费移除候选 %d 款。\n", len(p.DynamicOnly), len(p.FreeCandidates))
 	freeze := 0
 	for _, a := range p.Actions {
 		if a.Freeze {

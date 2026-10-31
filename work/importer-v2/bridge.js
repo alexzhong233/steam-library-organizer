@@ -12,10 +12,11 @@ async function steamImporter(a) {
   const getAll = () => {
     const map = new Map();
     for (const c of cs.userCollections || []) if(c && typeof c.id==='string') map.set(c.id,c);
-    for (const id of ['favorite','hidden']) {const c=lookup(id); if(c) map.set(id,c);}
+    for (const id of ['favorite','hidden','uncategorized']) {const c=lookup(id); if(c) map.set(id,c);}
     return [...map.values()];
   };
   const named = n => getAll().filter(c => String(c.displayName || c.id).toLowerCase()===n.toLowerCase() && !system(c.id));
+  const sameFilter=(x,y)=>{const stable=v=>Array.isArray(v)?v.map(stable):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,stable(v[k])])):v;return JSON.stringify(stable(x))===JSON.stringify(stable(y))};
   const dynamic = c => !!(c.bIsDynamic || c.m_filterSpec || c.internalAppFilter);
   const resolve = ids => ids.map(id => {const v=apps.GetAppOverviewByAppID(id);if(!v || v.appid!==id)throw Error('Unresolvable AppID '+id); return v;});
   const dd = c => {let v;try{v=c.AsDragDropCollection();}catch{} if(!v || typeof v.AddApps!=='function' || typeof v.RemoveApps!=='function')throw Error('Collection is not editable: '+c.id);return v;};
@@ -38,9 +39,59 @@ async function steamImporter(a) {
     return {id:c.id,name:c.displayName||c.id,dynamic:dynamic(c),system:system(c.id),editable,
       deletable:!system(c.id) && (deletable || typeof cs.DeleteCollection==='function'),filter,appids:members(c)};
   };
+  // This is the same per-app service used by Steam's "Remove free game" UI.
+  // Discover the service by its public method and protobuf name, never by
+  // build-specific webpack module numbers or guessed native API arguments.
+  const removalService = () => {
+    const chunks=globalThis.webpackChunksteamui;
+    const details=globalThis.appDetailsStore;
+    if(!Array.isArray(chunks)||typeof details?.CMInterface!=='function')throw Error('Steam free-license service unavailable on this version');
+    const transport=details.CMInterface()?.GetServiceTransport?.();
+    if(!transport)throw Error('Steam account service is not connected');
+    let require;
+    chunks.push([['sci-read-service-'+Date.now()+'-'+Math.random()],{},r=>{require=r}]);
+    if(!require?.m)throw Error('Steam service registry unavailable');
+    const candidates=Object.keys(require.m).filter(k=>{const source=String(require.m[k]);return source.includes('CUserAccount_CancelLicenseForApp_Request')&&source.includes('UserAccount.CancelLicenseForApp#1')});
+    if(candidates.length!==1)throw Error('Cannot uniquely identify Steam free-license service');
+    const service=Object.values(require(candidates[0])).find(x=>typeof x?.CancelLicenseForApp==='function');
+    if(!service)throw Error('Steam CancelLicenseForApp API unavailable');
+    return {service,transport};
+  };
+  const licenseDetails = id => new Promise((resolve,reject)=>{
+    const native=globalThis.SteamClient?.Apps;
+    if(typeof native?.RegisterForAppDetails!=='function')return reject(Error('Steam native license details unavailable'));
+    let handle,done=false;
+    const timer=setTimeout(()=>finish(null,Error('Steam license details timed out')),12000);
+    const finish=(value,error)=>{if(done)return;done=true;clearTimeout(timer);handle?.unregister?.();if(error)reject(error);else resolve(value)};
+    try {
+      handle=native.RegisterForAppDetails(id,d=>{
+        if(!d||d.unAppID!==id)return;
+        finish({appid:id,free_removable:d.bFreeRemovableLicense===true,master_appid:Number(d.unMasterSubAppID)||0,subscribed:d.bIsSubscribedTo===true});
+      });
+      if(done)handle?.unregister?.();
+    }catch(e){finish(null,e)}
+  });
+  if(a.op==='removal-check') {
+    removalService(); // Read-only compatibility check; no service request is sent.
+    if(!Array.isArray(a.appids)||a.appids.length>50||a.appids.some(id=>!Number.isSafeInteger(id)||id<=0))throw Error('Invalid removal selection');
+    return {items:await Promise.all(a.appids.map(async id=>{try{return await licenseDetails(id)}catch(e){return {appid:id,error:String(e.message||e)}}}))};
+  }
+  if(a.op==='remove-free-app') {
+    if(a.confirm!=='REMOVE_FREE_APP'||!Number.isSafeInteger(a.appid)||a.appid<=0)throw Error('Explicit removal confirmation required');
+    const d=await licenseDetails(a.appid);
+    if(!d.free_removable||d.master_appid||!d.subscribed)throw Error('Steam does not confirm a standalone removable free license');
+    const overview=apps.GetAppOverviewByAppID(a.appid);
+    if(!overview||(Number(overview.rt_last_time_played)||0)>0)throw Error('Game was played or disappeared; removal stopped');
+    const {service,transport}=removalService();
+    const reply=await service.CancelLicenseForApp(transport,{appid:a.appid});
+    const result=reply?.GetEResult?.();
+    if(result!==1)throw Error('Steam refused license cancellation (EResult '+result+')');
+    // Do not run Steam's optional uninstall wizard or edit any collections.
+    return {appid:a.appid,removed:true,result};
+  }
   if(a.op==='snapshot') {
     const map=new Map();
-    const push=c=>{for(const v of c?.allApps || [])if(Number.isSafeInteger(v.appid)&&v.appid>0) map.set(v.appid,{appid:v.appid,name:v.display_name||String(v.appid),last_played:Number(v.rt_last_time_played)||0});};
+    const push=c=>{for(const v of c?.allApps || [])if(Number.isSafeInteger(v.appid)&&v.appid>0){const playtime=Number(v.minutes_playtime_forever);map.set(v.appid,{appid:v.appid,name:v.display_name||String(v.appid),last_played:Number(v.rt_last_time_played)||0,...(Number.isFinite(playtime)&&playtime>=0?{playtime_minutes:playtime}:{})});}};
     push(cs.allAppsCollection);
     for(const id of ['type-games','type-software','type-music','type-videos','type-tools'])push(cs.appTypeCollectionMap?.get(id));
     // Hidden owned apps can be absent from an active library view.
@@ -50,6 +101,7 @@ async function steamImporter(a) {
   }
   if(a.op==='delete') {
     const c=lookup(a.id); if(!c)return {deleted:true};
+    if(a.expected_before && !equal(members(c),a.expected_before))throw Error('Collection changed before deletion');
     if(a.expected_name && (c.displayName||c.id)!==a.expected_name)throw Error('Collection changed since backup');
     await removeCollection(c);return {deleted:true};
   }
@@ -62,8 +114,9 @@ async function steamImporter(a) {
     if(matches.length>1)throw Error('Duplicate target collection name: '+a.name);
     c=matches[0] || null;
   }
-  if(c && (c.displayName||c.id)!==a.name)throw Error('Collection name changed after preview');
+  if(c && (c.displayName||c.id)!==(a.expected_name||a.name))throw Error('Collection name changed after preview');
   if(named(a.name).length>1)throw Error('Duplicate collection names');
+  const targetClashes=named(a.name).filter(x=>x.id!==c?.id);if(targetClashes.length)throw Error('Target name already occupied');
   if(typeof cs.GetCollectionIDByUserTag==='function') {
     const existing=cs.GetCollectionIDByUserTag(a.name);
     if(typeof existing==='string' && lookup(existing) && existing!==c?.id)throw Error('Steam name lookup collision; re-preview');
@@ -81,12 +134,17 @@ async function steamImporter(a) {
     if(!equal(fresh?members(fresh):[],a.appids))throw Error('Favorites verification failed');
     return fresh?summarize(fresh):{id:'favorite',name:a.name,system:true,dynamic:false,editable:true,deletable:false,filter:null,appids:[]};
   }
+  if(a.overlay&&c&&dynamic(c)&&sameFilter(c.m_filterSpec||c.filterSpec,a.filter)) {
+    if(!equal(members(c),a.appids))throw Error('Overlay members changed since preview');
+    if((c.displayName||c.id)!==a.name){if(typeof c.SetName==='function')await c.SetName(a.name);else if(typeof c.m_strName==='string')c.m_strName=a.name;else throw Error('Rename unsupported');await save(c);}
+    const fresh=lookup(c.id);if(!fresh||(fresh.displayName||fresh.id)!==a.name||!dynamic(fresh)||!equal(members(fresh),a.appids))throw Error('Overlay save verification failed');return summarize(fresh);
+  }
   const restoringDynamic=!!a.restore_dynamic;
-  if(dynamic(c||{}) && !restoringDynamic && !a.freeze_dynamic)throw Error('Unexpected dynamic collection; re-preview');
+  if(dynamic(c||{}) && !restoringDynamic && !a.freeze_dynamic && !a.recovery)throw Error('Unexpected dynamic collection; re-preview');
   if(a.id && !c && (a.expected_before||[]).length)throw Error('Original collection missing; re-preview');
   // Validate the cached dynamic recipe before discarding its live counterpart.
   // The temporary proof is covered by the started-operation recovery journal.
-  if(c && dynamic(c) && !restoringDynamic) {
+  if(c && dynamic(c) && !restoringDynamic && !a.recovery) {
     if(!a.filter || !Array.isArray(a.filter.filterGroups))throw Error('Dynamic filter backup unavailable');
     const proofName='__SCI_'+a.run_id+'_'+a.sequence+'_check';
     if(named(proofName).length)throw Error('Unfinished dynamic check; use recovery');
@@ -134,6 +192,7 @@ async function steamImporter(a) {
     if(add.length)await d.AddApps(add);
     const drop=old.filter(id=>!want.has(id));
     if(drop.length)await d.RemoveApps(resolve(drop));
+    if((c.displayName||c.id)!==a.name){if(!a.recovery)throw Error('Unexpected rename');if(typeof c.SetName==='function')await c.SetName(a.name);else if(typeof c.m_strName==='string')c.m_strName=a.name;else throw Error('Rename unsupported');}
     await save(c);
   }
   const fresh=lookup(c.id);
