@@ -15,6 +15,19 @@ import (
 //go:embed bridge.js
 var bridgeSource string
 
+// defaultCDPPort 是 Steam CEF 调试端口的默认值。CLI 用它当 flag 默认值，
+// 桌面版没有 flag，必须显式传它——v2.4.2 及之前桌面版传的是 0，
+// 导致 connect 请求 http://127.0.0.1:0/json，永远连不上 Steam。
+const defaultCDPPort = 8080
+
+// normalizeCDPPort 兜底：任何入口传 0 都按默认端口处理。
+func normalizeCDPPort(port int) int {
+	if port == 0 {
+		return defaultCDPPort
+	}
+	return port
+}
+
 // version 用 var 而非 const，便于发布时用
 // -ldflags "-X main.version=2.3.4" 注入真实 tag，保证二进制与 Release 一致。
 var version = "2.3.2"

@@ -28,7 +28,7 @@ func readLine(prompt string) string {
 func main() {
 	initConsole()
 	rootOpt := flag.String("steam-root", "", "Steam 安装目录（默认自动检测）")
-	port := flag.Int("port", 8080, "本机 Steam CEF 端口，通常 8080")
+	port := flag.Int("port", defaultCDPPort, "本机 Steam CEF 端口，通常 8080")
 	report := flag.String("data-dir", "", "数据目录（默认在 EXE 或 macOS App 旁）")
 	check := flag.Bool("manifest-info", false, "只检查当前分类配置，不连接 Steam")
 	gui := flag.Bool("gui", true, "启动图形界面")

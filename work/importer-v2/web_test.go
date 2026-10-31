@@ -62,3 +62,14 @@ func TestAssetsLiveInTheirOwnFiles(t *testing.T) {
 		t.Error("web/app.js 看着不完整")
 	}
 }
+
+// 桌面版曾经把端口 0 一路传到 connect()，请求 http://127.0.0.1:0/json
+// 永远失败。这个测试钉住兜底逻辑，任何入口传 0 都必须回到默认端口。
+func TestNormalizeCDPPort(t *testing.T) {
+	if got := normalizeCDPPort(0); got != 8080 {
+		t.Errorf("端口 0 应回落到默认 8080，实际 %d", got)
+	}
+	if got := normalizeCDPPort(9333); got != 9333 {
+		t.Errorf("显式指定的端口不应被覆盖，期望 9333，实际 %d", got)
+	}
+}

@@ -46,7 +46,7 @@ func main() {
 	desktopDone = done
 
 	go func() {
-		if err := runGUI(m, source, "", 0, home); err != nil {
+		if err := runGUI(m, source, "", defaultCDPPort, home); err != nil {
 			fmt.Fprintln(os.Stderr, "界面初始化失败：", err)
 		}
 	}()

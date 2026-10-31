@@ -130,6 +130,7 @@ func guiPage() string {
 }
 
 func runGUI(m Manifest, source, plan string, port int, report string) error {
+	port = normalizeCDPPort(port)
 	root, _ := steamRoot()
 	if report == "" {
 		executable, e := os.Executable()
