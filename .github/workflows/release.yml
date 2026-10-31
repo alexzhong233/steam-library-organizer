@@ -96,7 +96,8 @@ jobs:
             echo "缺少仓库 Secret GUI_CORE_B64。请将 SteamCollectionImporterCore 以 base64 内容保存到该 Secret。" >&2
             exit 1
           fi
-          printf '%s' "$GUI_CORE_B64" | base64 --decode > "$RUNNER_TEMP/SteamCollectionImporterCore"
+          # macOS runner 使用 BSD base64，-D 是其解码参数。
+          printf '%s' "$GUI_CORE_B64" | base64 -D > "$RUNNER_TEMP/SteamCollectionImporterCore"
           chmod 755 "$RUNNER_TEMP/SteamCollectionImporterCore"
       - name: 构建 macOS App 和 DMG
         run: python3 scripts/build_release.py --gui-core "$RUNNER_TEMP/SteamCollectionImporterCore" --output-dir dist
