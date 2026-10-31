@@ -3,10 +3,11 @@ package main
 import (
 	"bufio"
 	"context"
-	"embed"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/exec"
@@ -21,9 +22,6 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 )
-
-//go:embed frontend/dist
-var assets embed.FS
 
 var guiURL = regexp.MustCompile(`GUI:\s+(https?://127\.0\.0\.1:[0-9]+/)`)
 
@@ -82,14 +80,25 @@ func main() {
 	}
 	app := &App{core: core.cmd, coreURL: core.url}
 	defer app.shutdown(context.Background())
+	target, err := url.Parse(core.url)
+	if err != nil {
+		panic(fmt.Errorf("核心 GUI 地址无效：%w", err))
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, proxyErr error) {
+		http.Error(w, "Steam 收藏核心连接失败："+proxyErr.Error(), http.StatusBadGateway)
+	}
 
 	err = wails.Run(&options.App{
-		Title:                    "Steam 收藏整理",
-		Width:                    1440,
-		Height:                   900,
-		MinWidth:                 980,
-		MinHeight:                640,
-		AssetServer:              &assetserver.Options{Assets: assets},
+		Title:     "Steam 收藏整理",
+		Width:     1440,
+		Height:    900,
+		MinWidth:  980,
+		MinHeight: 640,
+		// The core serves the complete page and all /api routes. Proxying it
+		// through Wails keeps one WebView origin, so review windows and relative
+		// API calls work without an external browser or iframe.
+		AssetServer:              &assetserver.Options{Handler: proxy},
 		BackgroundColour:         options.NewRGB(15, 23, 32),
 		OnStartup:                app.startup,
 		OnShutdown:               app.shutdown,
