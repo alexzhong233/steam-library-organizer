@@ -31,7 +31,7 @@ INFO_PLIST = {
     "CFBundleDisplayName": "Steam 收藏整理",
     "CFBundlePackageType": "APPL",
     "CFBundleInfoDictionaryVersion": "6.0",
-    "LSMinimumSystemVersion": "10.15",
+    "LSMinimumSystemVersion": "11.0",
     "NSHighResolutionCapable": True,
     "NSPrincipalClass": "NSApplication",
 }
@@ -65,6 +65,16 @@ def build(args) -> int:
         "CGO_ENABLED": "1" if goos == "darwin" else "0",
         "GOFLAGS": "",
     })
+    if goos == "darwin":
+        # wails 的 WailsContext.m 在文件对话框里用 UTType 做扩展名过滤，但它的
+        # #cgo LDFLAGS 只写了 Foundation/Cocoa/WebKit，没写 UniformTypeIdentifiers，
+        # 链接期直接 "Undefined symbols: _OBJC_CLASS_$_UTType"。补在这里。
+        #
+        # 同时把最低系统版本钉在 11.0：UTType 是 11.0 才有的 API，而 clang 不指定
+        # -mmacosx-version-min 时默认取构建机版本（runner 上是 14），产出的二进制
+        # 会平白要求 macOS 14。11.0 也是 Apple Silicon 的下限。
+        env["CGO_CFLAGS"] = "-mmacosx-version-min=11.0"
+        env["CGO_LDFLAGS"] = "-mmacosx-version-min=11.0 -framework UniformTypeIdentifiers"
     ldflags = f"-s -w -X main.version={version}"
     if goos == "windows":
         ldflags += " -H=windowsgui"  # 双击不弹黑框
