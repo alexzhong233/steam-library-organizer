@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "research_date": "example",
+  "game_count": 5,
+  "games": [
+    {"appid": 1, "name": "Example Campaign", "target": "系列｜Call of Duty（使命召唤）", "priority": 1},
+    {"appid": 2, "name": "Example Multiplayer", "target": "系列｜Call of Duty（使命召唤）", "priority": 1},
+    {"appid": 3, "name": "Example Demo", "target": "系列｜Call of Duty（使命召唤）", "priority": 1},
+    {"appid": 4, "name": "Example Soundtrack", "target": "系列｜Call of Duty（使命召唤）", "priority": 1},
+    {"appid": 5, "name": "Example Tools", "target": "系列｜Call of Duty（使命召唤）", "priority": 1}
+  ]
+}

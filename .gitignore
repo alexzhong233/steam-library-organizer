@@ -1,0 +1,38 @@
+# OS and editor files
+.DS_Store
+.vscode/
+.idea/
+
+# Python / generated logs
+__pycache__/
+*.pyc
+*.log
+
+# Private Steam library snapshots, prices, history, and personal plans
+/data/
+/outputs/
+/work/live-scan-*/
+/work/store_batches/
+/work/**/*.json
+/work/**/*.html
+/work/**/*.jpg
+/work/**/*.log
+/work/**/history/
+/work/**/backups/
+/work/**/removals/
+/work/**/prices.json
+/work/**/classification.json
+!/work/importer-v2/classification.example.json
+
+# Local binaries and application bundles
+*.exe
+*.dmg
+*.app/
+/work/importer-v2/SteamCollectionImporter
+/work/importer-v2/SteamCollectionImporter-arm64.exe
+
+# Local-only project notes and personal scripts
+/AGENTS.md
+/WORKBUDDY.md
+/docs/
+/reclassify_v34.py
