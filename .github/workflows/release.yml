@@ -70,7 +70,7 @@ jobs:
           fi
 
   windows:
-    name: Windows ${{ matrix.arch }}
+    name: Windows x64
     needs: [version, test]
     runs-on: windows-latest
     strategy:
@@ -79,8 +79,6 @@ jobs:
         include:
           - arch: x64
             goarch: amd64
-          - arch: arm64
-            goarch: arm64
     steps:
       - name: 检出源码
         uses: actions/checkout@v4
@@ -142,21 +140,16 @@ jobs:
             SteamCollectionImporter-windows-${{ matrix.arch }}.SHA256SUMS.txt
 
   macos:
-    name: macOS ${{ matrix.arch }}
+    name: macOS arm64
     needs: [version, test]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # macOS 13（Intel）已退役，公开仓库用不上 Intel 大机型；
-          # 两个架构都在 arm64 机器上跑，Intel 走 clang 交叉编译（同一套 SDK）。
           - arch: arm64
             runner: macos-14
             goarch: arm64
-          - arch: x64
-            runner: macos-14
-            goarch: amd64
     steps:
       - name: 检出源码
         uses: actions/checkout@v4
@@ -233,9 +226,7 @@ jobs:
             echo "| 平台 | 文件 |"
             echo "|---|---|"
             echo "| Windows x64 | \`SteamCollectionImporter-windows-x64.zip\` |"
-            echo "| Windows ARM64 | \`SteamCollectionImporter-windows-arm64.zip\` |"
             echo "| macOS Apple Silicon | \`SteamCollectionImporter-macOS-arm64.dmg\` |"
-            echo "| macOS Intel | \`SteamCollectionImporter-macOS-x64.dmg\` |"
             echo ""
             echo "## 校验"
             echo ""
