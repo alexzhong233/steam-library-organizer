@@ -1,7 +1,7 @@
 {
   "name": "steam-collection-importer-ui-tests",
   "private": true,
-  "description": "gui_ui.go 内嵌页面的交互回归测试（jsdom）。Go 构建不依赖这里的任何东西。",
+  "description": "web/ 界面源码的交互回归测试（jsdom）。Go 构建不依赖这里的任何东西。",
   "type": "module",
   "scripts": {
     "test": "node ui_dom_test.mjs"

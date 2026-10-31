@@ -56,7 +56,7 @@ jobs:
             | head -15 | while IFS= read -r line; do echo "::error::$line"; done
           exit 1
 
-      # 界面交互回归：jsdom 加载 gui_ui.go 内嵌的真实页面，验证主题切换、
+      # 界面交互回归：jsdom 加载 web/ 下的真实页面，验证主题切换、
       # AI 浮层、表头全选、拖拽归类四条链路。
       - name: 安装界面测试依赖
         run: npm ci --no-audit --no-fund

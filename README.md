@@ -14,7 +14,8 @@
 
 | 文件 | 作用 |
 |---|---|
-| `main.go` / `gui.go` / `gui_ui.go` | 入口、本机 HTTP 服务、内嵌网页界面 |
+| `main.go` / `gui.go` / `gui_ui.go` | 入口、本机 HTTP 服务、页面组装（把 `web/` 三个文件拼成一页） |
+| `web/index.html` / `web/app.css` / `web/app.js` | 界面源码：页面骨架、样式（深色/浅色两套变量）、单页脚本 |
 | `bridge.js` | 在 Steam CEF 里执行的桥接脚本，负责读取库与收藏、写入收藏 |
 | `engine.go` / `model.go` / `preview.go` | 计划求值、清单模型、只读预演 |
 | `collections_plan.go` | 清单导入：接受规则文件、完整库导出和快照，支持多归属 overlay |

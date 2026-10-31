@@ -1,16 +1,18 @@
-// 界面交互回归测试：用 jsdom 加载 gui_ui.go 内嵌的真实页面 + 真实脚本，
+// 界面交互回归测试：用 jsdom 加载 web/ 下的真实页面 + 真实脚本，
 // 桩掉 fetch 后逐项验证主题切换、AI 浮层、表头全选、拖拽归类。
 // 运行：node ui_dom_test.mjs（依赖 devDependencies 里的 jsdom，npm ci 即可）
-// 用 jsdom 加载真实首页（gui_ui.go 内嵌的 guiHTML）+ 真实脚本，
-// 桩掉 fetch，逐项验证：主题切换、AI 浮层、表头全选、拖拽归类。
 import { JSDOM } from "jsdom";
 import fs from "node:fs";
 
-// 直接从 gui_ui.go 里提取内嵌页面，保证测的就是将要发布的页面。
-const go = fs.readFileSync(new URL("./gui_ui.go", import.meta.url), "utf8");
-const m = go.match(/const guiHTML = `([\s\S]*?)`/);
-if (!m) { console.error("gui_ui.go 里没找到 guiHTML"); process.exit(2); }
-const html = m[1];
+// 读 web/ 下的源码并做与 gui_ui.go 相同的占位符替换，保证测的就是要发布的页面。
+// 用 split/join 而不是 replace，避免 CSS/JS 里的 $ 被当成替换模式。
+const asset = f => fs.readFileSync(new URL("./web/" + f, import.meta.url), "utf8");
+const html = asset("index.html")
+  .split("{{CSS}}").join(asset("app.css"))
+  .split("{{JS}}").join(asset("app.js"));
+if (html.includes("{{CSS}}") || html.includes("{{JS}}")) {
+  console.error("web/index.html 的占位符没有被替换"); process.exit(2);
+}
 
 const server = { theme: "dark", ai_url: "https://saved.example.com/v1", model: "saved-model" };
 

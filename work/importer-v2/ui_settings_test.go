@@ -68,13 +68,13 @@ func TestUISettingsSurvivesBrokenFile(t *testing.T) {
 func TestGUIPageHasInteractionHooks(t *testing.T) {
 	page := guiPage()
 	for _, want := range []string{
-		`id="themeToggle"`,       // 主题切换按钮
-		`id="aiPanel"`,           // 浮动的 AI 面板
-		`id="selectAll"`,         // 表头全选
-		`toggleAI()`,             // 工具栏里的入口
-		`applyTargetTo(`,         // 拖放与批量共用的归类函数
-		`dataTransfer`,           // 拖拽
-		"html[data-theme=light]", // 浅色主题变量
+		`id="themeToggle"`,   // 主题切换按钮
+		`id="aiPanel"`,       // 浮动的 AI 面板
+		`id="selectAll"`,     // 表头全选
+		`toggleAI()`,         // 工具栏里的入口
+		`applyTargetTo(`,     // 拖放与批量共用的归类函数
+		`dataTransfer`,       // 拖拽
+		`data-theme='light'`, // 浅色主题变量（prettier 会补引号，别写无引号形式）
 	} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("页面里找不到 %q", want)
