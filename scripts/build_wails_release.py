@@ -34,6 +34,12 @@ def find_core(explicit: Path | None) -> Path:
 
 
 def main() -> int:
+    # Windows runner 的 stdout 默认是 cp1252，打印中文（尤其全角冒号）会直接抛
+    # UnicodeEncodeError。wails 明明编译成功了，脚本却在 print 上挂掉。
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(description="构建 Wails 系统 WebView 版 Steam 收藏整理工具")
     parser.add_argument("--platform", choices=["darwin/arm64", "windows/amd64", "windows/arm64"], default="darwin/arm64")
     parser.add_argument("--core", type=Path, help="对应平台的 SteamCollectionImporterCore")
@@ -69,6 +75,8 @@ def main() -> int:
         resources = output / "Resources"
         resources.mkdir(parents=True, exist_ok=True)
         shutil.copy2(core, resources / "SteamCollectionImporterCore.exe")
+        if not exe.is_file():
+            raise SystemExit(f"wails 声称构建成功，但没有生成 {exe}")
         print("EXE：", exe)
     print("核心：", core)
     return 0

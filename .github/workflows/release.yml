@@ -149,11 +149,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # macOS 13（Intel）已退役，公开仓库用不上 Intel 大机型；
+          # 两个架构都在 arm64 机器上跑，Intel 走 clang 交叉编译（同一套 SDK）。
           - arch: arm64
             runner: macos-14
             goarch: arm64
           - arch: x64
-            runner: macos-13
+            runner: macos-14
             goarch: amd64
     steps:
       - name: 检出源码
