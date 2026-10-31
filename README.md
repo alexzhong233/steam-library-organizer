@@ -45,6 +45,25 @@ python3 scripts/build_release.py --install
 python3 scripts/build_release.py --gui-core /path/to/SteamCollectionImporterCore
 ```
 
+## Wails 系统 WebView 桌面版
+
+`desktop-wails` 是新的桌面窗口外壳。它把现有 GUI 放入系统 WebView：macOS 使用 WKWebView，Windows 使用 WebView2，因此不会再自动打开外部浏览器。Wails 外壳启动随 App 携带的 `SteamCollectionImporterCore`，现有页面和 Steam 操作逻辑保持不变。
+
+开发构建需要 Wails v2.10+：
+
+```sh
+cd desktop-wails
+wails build
+```
+
+构建 App 时，把 `SteamCollectionImporterCore` 放到 App 的 `Resources` 目录；也可以用环境变量 `STEAM_COLLECTION_CORE` 指定核心路径。当前仓库只包含桌面外壳，Windows 发行版仍需要对应架构的 Core 二进制；没有 Core 时程序会显示明确的启动错误，不会打开空白窗口。
+
+macOS 本机可以直接双击根目录的 `build-wails.command`，或运行：
+
+```sh
+python3 scripts/build_wails_release.py --platform darwin/arm64 --install
+```
+
 ## GitHub Actions 自动发布三个版本
 
 仓库自带 `.github/workflows/release.yml`。它会运行测试并构建：
