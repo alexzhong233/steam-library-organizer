@@ -33,10 +33,26 @@ jobs:
         run: go vet -mod=vendor ./...
 
       - name: go test
+        id: gotest
         # 个人清单 classification.json 不进仓库，测试会自动回落到
         # classification.example.json，依赖真实 AppID 的断言随即跳过。
-        # 注意：不要接管道（如 | tail），否则退出码被吞、失败也显示成功。
-        run: go test -mod=vendor ./...
+        # tee 会吞掉退出码，所以先记下 outcome，再单独汇总失败原因。
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          go test -mod=vendor -v ./... 2>&1 | tee /tmp/go-test.log
+
+      - name: 汇总测试失败
+        if: steps.gotest.outcome == 'failure'
+        run: |
+          echo "## go test 失败明细" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          grep -E "^--- FAIL|^FAIL|panic:|^ +[A-Za-z0-9_]+_test\.go:[0-9]+:" /tmp/go-test.log | head -60 >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          # 转成 annotation，Actions 页面和 check-runs API 都能读到
+          grep -E "^--- FAIL|panic:|^ +[A-Za-z0-9_]+_test\.go:[0-9]+:" /tmp/go-test.log \
+            | head -15 | while IFS= read -r line; do echo "::error::$line"; done
+          exit 1
 
   bridge:
     name: 桥接脚本测试
@@ -130,7 +146,8 @@ jobs:
           done
           # 只针对真实账号，不用通用 17 位正则——测试夹具里的假 ID
           # （基址+12345）是合法且必要的，不该被误伤。
-          if git grep -nIE '137903045|76561198098168773' -- ':!vendor'; then
+          # 必须排除 .github：否则规则字符串会命中本文件自己。
+          if git grep -nIE '137903045|76561198098168773' -- ':!vendor' ':!.github' ':!*.md'; then
             echo "::error::源码中出现真实账号标识"
             fail=1
           fi
