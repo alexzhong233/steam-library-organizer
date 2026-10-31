@@ -56,7 +56,9 @@ func TestRemovalPreviewBoundsConcurrencyAndStartsExpiryAfterChecks(t *testing.T)
 	for _, id := range ids {
 		f.State.Apps = append(f.State.Apps, App{AppID: id, Name: "Free Game"})
 	}
-	e := &Engine{Eval: f}
+	// 必须注入 AccountReader：否则 Snapshot() 会去调真正的 currentAccount()，
+	// 在没有 Steam 的机器（如 CI 的 Linux runner）上直接报"当前平台未实现"。
+	e := &Engine{Eval: f, AccountReader: func() (string, error) { return "123", nil }}
 	started := make(chan struct{}, len(ids))
 	release := make(chan struct{})
 	defer close(release)
@@ -113,7 +115,9 @@ func TestRemovalPreviewBoundsConcurrencyAndStartsExpiryAfterChecks(t *testing.T)
 
 func TestRemovalPreviewCancellationReturnsNoPlan(t *testing.T) {
 	f := &removalEvaluator{memoryEvaluator: memoryEvaluator{State: testSnapshot()}}
-	e := &Engine{Eval: f}
+	// 必须注入 AccountReader：否则 Snapshot() 会去调真正的 currentAccount()，
+	// 在没有 Steam 的机器（如 CI 的 Linux runner）上直接报"当前平台未实现"。
+	e := &Engine{Eval: f, AccountReader: func() (string, error) { return "123", nil }}
 	ctx, cancel := context.WithCancel(context.Background())
 	fetch := func(ctx context.Context, id int) PriceInfo {
 		cancel()

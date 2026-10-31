@@ -402,6 +402,52 @@ func runGUI(m Manifest, source, plan string, port int, report string) error {
 		dir, e := eng.ExportLibrary(st.manifest)
 		jsonResponse(w, map[string]any{"ok": e == nil, "error": errText(e), "dir": dir})
 	})
+	// 前端原来用 a.download + Blob URL 触发下载。这在 WebView 里不可靠：
+	// WKWebView 默认不处理 download 属性（点了没反应），WebView2 则会弹自己的
+	// 下载条并落到默认下载目录，两个平台表现不一致，还会受沙盒策略影响。
+	// 改成由核心把文件写到数据目录并回报路径，界面直接显示“已保存到 …”。
+	mux.HandleFunc("/api/save-json", func(w http.ResponseWriter, r *http.Request) {
+		var q struct {
+			Name string          `json:"name"`
+			Data json.RawMessage `json:"data"`
+		}
+		if e := readJSON(r, &q); e != nil {
+			jsonResponse(w, map[string]any{"ok": false, "error": e.Error()})
+			return
+		}
+		if len(q.Data) == 0 || string(q.Data) == "null" {
+			jsonResponse(w, map[string]any{"ok": false, "error": "没有可保存的内容"})
+			return
+		}
+		// Base 顺带挡掉路径穿越；只保留最后一段文件名。
+		name := strings.TrimSpace(filepath.Base(q.Name))
+		if name == "" || name == "." || name == ".." || name == string(filepath.Separator) {
+			name = "export.json"
+		}
+		if !strings.HasSuffix(strings.ToLower(name), ".json") {
+			name += ".json"
+		}
+		dir := filepath.Join(st.home, "exports")
+		if e := os.MkdirAll(dir, 0700); e != nil {
+			jsonResponse(w, map[string]any{"ok": false, "error": e.Error()})
+			return
+		}
+		// 不覆盖已有导出，自动加序号。
+		path := filepath.Join(dir, name)
+		ext := filepath.Ext(name)
+		stem := strings.TrimSuffix(name, ext)
+		for i := 2; ; i++ {
+			if _, e := os.Stat(path); os.IsNotExist(e) {
+				break
+			}
+			path = filepath.Join(dir, fmt.Sprintf("%s-%d%s", stem, i, ext))
+		}
+		if e := os.WriteFile(path, q.Data, 0600); e != nil {
+			jsonResponse(w, map[string]any{"ok": false, "error": e.Error()})
+			return
+		}
+		jsonResponse(w, map[string]any{"ok": true, "path": path})
+	})
 	mux.HandleFunc("/api/prices/refresh", func(w http.ResponseWriter, r *http.Request) {
 		var q struct {
 			AppIDs []int `json:"appids"`
