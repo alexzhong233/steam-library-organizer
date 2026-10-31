@@ -29,6 +29,7 @@ __pycache__/
 *.dmg
 *.app/
 /dist/
+/desktop-wails/build/
 /work/importer-v2/SteamCollectionImporter
 /work/importer-v2/SteamCollectionImporter-arm64.exe
 
