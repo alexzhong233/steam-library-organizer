@@ -60,8 +60,9 @@ jobs:
       - name: 运行 Go 测试
         run: go test ./...
 
-      - name: 运行桌面入口测试
-        run: go test -tags desktop,production ./...
+      # 桌面入口的测试不在这里跑：-tags desktop 在 Linux 上要 gtk+-3.0 与
+      # webkit2gtk 的头文件，ubuntu runner 没有装。桌面版只发 Windows 与 macOS，
+      # 那两个平台各自的 job 里已经跑过同一批测试。
 
       - name: 运行桥接测试
         run: |

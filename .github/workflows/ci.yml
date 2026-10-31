@@ -29,6 +29,8 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: work/importer-v2/go.sum
 
+      # 只测命令行构建。桌面构建（-tags desktop）在 Linux 上需要 gtk/webkit 头文件，
+      # ubuntu runner 没有；它的测试放在下面的 desktop job（Windows）里跑。
       - name: go vet
         run: go vet ./...
 
