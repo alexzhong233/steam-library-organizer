@@ -45,6 +45,29 @@ python3 scripts/build_release.py --install
 python3 scripts/build_release.py --gui-core /path/to/SteamCollectionImporterCore
 ```
 
+## GitHub Actions 自动发布三个版本
+
+仓库自带 `.github/workflows/release.yml`。它会运行测试并构建：
+
+- Windows x64：`SteamCollectionImporter-windows-x64.exe`
+- Windows ARM64：`SteamCollectionImporter-windows-arm64.exe`
+- macOS ARM64：签名的 `.app` 和 `.dmg`
+
+Windows 两个版本使用仓库中的 Go 源码，可以直接构建。macOS 图形版还需要历史 GUI 核心二进制；该核心没有提交到仓库，也不应把个人 Steam 数据一起提交。首次配置 Actions 时，在仓库 **Settings → Secrets and variables → Actions → New repository secret** 创建 `GUI_CORE_B64`，值为本机核心文件的 base64 内容：
+
+```sh
+base64 -i /Applications/SteamCollectionImporter.app/Contents/Resources/SteamCollectionImporterCore | pbcopy
+```
+
+然后把剪贴板内容粘贴到 `GUI_CORE_B64`。不要把这个值写入代码或公开日志。配置完成后，在 GitHub 的 **Actions → 构建并发布 Release → Run workflow** 输入版本号（例如 `v1.0.0`）；或者推送一个 `v*` 标签：
+
+```sh
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+工作流会在三个构建都成功后创建 GitHub Release，并附上两个 Windows 压缩包、macOS DMG、macOS tar.gz 和校验文件。若未设置 `GUI_CORE_B64`，macOS 作业会直接失败，不会发布缺少核心程序的不可用 App。
+
 ## 配置
 
 启动工具后，在右侧“AI 整理”面板中填写 OpenAI 兼容 API 根地址、API Key 和模型，然后点击“获取模型”。提示词由用户自行编写，AI 结果会先进入独立审核窗口，确认后才会载入待保存方案。
