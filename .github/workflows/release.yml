@@ -70,7 +70,7 @@ jobs:
           fi
 
   windows:
-    name: Windows x64
+    name: Windows ${{ matrix.arch }}
     needs: [version, test]
     runs-on: windows-latest
     strategy:
@@ -140,7 +140,7 @@ jobs:
             SteamCollectionImporter-windows-${{ matrix.arch }}.SHA256SUMS.txt
 
   macos:
-    name: macOS arm64
+    name: macOS ${{ matrix.arch }}
     needs: [version, test]
     runs-on: ${{ matrix.runner }}
     strategy:
