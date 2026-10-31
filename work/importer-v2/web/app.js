@@ -19,12 +19,12 @@ function status(msg, ok = true) {
   el.textContent = msg;
   el.className = 'status ' + (ok ? 'ok' : 'bad');
 }
-let uiPrefs = { theme: 'dark', ai_url: '', model: '' };
+let uiPrefs = { theme: 'light', ai_url: '', model: '' };
 function applyTheme(t) {
   t = t === 'light' ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', t);
   try {
-    localStorage.setItem('sci-theme', t);
+    localStorage.setItem('steam-collection-importer-theme', t);
   } catch (e) {}
   let b = document.querySelector('#themeToggle');
   if (b) {
@@ -47,10 +47,13 @@ function toggleAI() {
   let p = document.querySelector('#aiPanel');
   if (!p) return;
   p.open = !p.open;
-  if (p.open) {
-    let f = p.querySelector('#aiurl');
-    if (f && !f.value) f.focus();
-  }
+  if (p.open && p.scrollIntoView)
+    p.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+// 导航「刷新列表」：已连接就直接重读，没连接就重启 Steam 到连接模式。
+function refreshList() {
+  if (stateData && stateData.connected) connect();
+  else restartSteam();
 }
 function savePrefs(patch) {
   return api('/api/ui-settings', patch).catch(() => {});
@@ -123,7 +126,13 @@ function renderTree() {
     };
     dyn.appendChild(b);
   }
-  add('全部游戏', '');
+  add(
+    '全部游戏',
+    '',
+    (browsingActual
+      ? (stateData.snapshot?.apps || []).length
+      : (stateData.manifest.games || []).length) + '款',
+  );
   add('未分类', '@uncategorized', uncategorizedIDs().size);
   add('无静态收藏', '@no-static', noStaticIDs().size);
   for (let c of dynamicCollections())
@@ -271,7 +280,7 @@ function renderPublisherFilter() {
     el.value = selectedPublisher;
 }
 function playedText(t) {
-  return t > 0 ? new Date(t * 1000).toLocaleString() : '无记录';
+  return t > 0 ? new Date(t * 1000).toLocaleDateString('zh-CN') : '无记录';
 }
 function durationText(n) {
   return n === undefined || n === null
@@ -339,7 +348,7 @@ function renderGames() {
                 (c.appids || []).includes(a.appid),
             )
             .map((c) => c.name)
-            .join('；') || '未分类',
+            .join('\n') || '未分类',
       }))
     : stateData.manifest.games;
   let pub = document.querySelector('#publisherFilter')?.value || '',
@@ -418,7 +427,7 @@ function renderGames() {
       g.appid +
       (rule.reason ? ' · ' + esc(rule.reason) : '') +
       '</small></td><td>' +
-      esc(actual ? g.target : planTargets(g).join('；') || '未分类') +
+      esc(actual ? g.target : planTargets(g).join('\n') || '未分类') +
       '</td><td>' +
       esc(publisherNames(g).join('；') || '待查询') +
       '</td><td>' +
@@ -567,8 +576,8 @@ async function loadState() {
     !!stateData.connected,
   );
   let historyHeading = document.querySelector('#historyView h2');
-  historyHeading.textContent = '历史 · ' + stateData.history_dir;
-  historyHeading.style.overflowWrap = 'anywhere';
+  historyHeading.textContent = '历史';
+  historyHeading.title = '历史目录：' + stateData.history_dir;
   refreshHistory();
 }
 let connectionBusy = false;
@@ -584,8 +593,7 @@ async function diagnostics() {
   status('正在检查 Steam 连接…');
   try {
     let x = await api('/api/diagnostics', {});
-    document.querySelector('#diagnosticsPanel').classList.remove('hidden');
-    document.querySelector('#diagnosticsResult').innerHTML = (x.steps || [])
+    let html = (x.steps || [])
       .map(
         (s) =>
           '<p class="' +
@@ -599,6 +607,11 @@ async function diagnostics() {
           '</p>',
       )
       .join('');
+    document.querySelector('#diagnosticsResult').innerHTML = html;
+    let dlg = document.querySelector('#diagnosticsDialog');
+    document.querySelector('#diagnosticsDialogContent').innerHTML =
+      html || '<p>没有诊断结果。</p>';
+    if (dlg && dlg.showModal) dlg.showModal();
     status(x.ok ? '连接诊断通过' : '连接诊断发现问题，请查看结果', x.ok);
   } catch (e) {
     status('诊断失败：' + e.message, false);
@@ -798,12 +811,7 @@ function renderPreview(p) {
     '</tbody></table><p class="subtle">动态收藏只读取，不在变更列表中。正式保存前会再次核对 Steam 当前状态并备份。</p>';
 }
 async function apply() {
-  if (
-    !confirm(
-      '请确认已在预览中检查动态提示、数量和目标收藏。保存会修改 Steam 收藏并先写入备份。',
-    )
-  )
-    return;
+  if (!confirm('确认将待保存方案写入 Steam？保存前会自动备份。')) return;
   let x = await api('/api/apply', { confirm: 'APPLY' });
   if (x.ok) {
     browsingActual = true;
@@ -977,13 +985,11 @@ async function suggest() {
       'AI 建议 ' + Math.min(i + 80, games.length) + ' / ' + games.length,
       true,
     );
-    let batch = games
-      .slice(i, i + 80)
-      .map((g) => ({
-        ...g,
-        price: (stateData.prices || {})[g.appid] || null,
-        last_played: (apps.get(g.appid) || {}).last_played || 0,
-      }));
+    let batch = games.slice(i, i + 80).map((g) => ({
+      ...g,
+      price: (stateData.prices || {})[g.appid] || null,
+      last_played: (apps.get(g.appid) || {}).last_played || 0,
+    }));
     let x = await api('/api/ai/suggest', {
       url: document.querySelector('#aiurl').value,
       key: document.querySelector('#aikey').value,
@@ -1120,8 +1126,55 @@ function showTab(tab) {
     .classList.toggle('hidden', tab !== 'history');
   if (tab === 'history') refreshHistory();
 }
+function bindCollectionHint() {
+  let info = document.querySelector('#collectionHint');
+  if (!info || info.dataset.tipBound) return;
+  info.dataset.tipBound = '1';
+  let tip = null;
+  function hide() {
+    if (tip) {
+      tip.remove();
+      tip = null;
+    }
+  }
+  function show() {
+    hide();
+    tip = document.createElement('div');
+    tip.id = 'collectionTooltip';
+    tip.textContent = info.getAttribute('aria-label') || '';
+    document.body.appendChild(tip);
+    let r = info.getBoundingClientRect(),
+      w = tip.offsetWidth,
+      h = tip.offsetHeight,
+      left = Math.min(
+        Math.max(8, r.left),
+        Math.max(8, window.innerWidth - w - 8),
+      ),
+      top = r.bottom + 8;
+    if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 8);
+    tip.style.left = left + 'px';
+    tip.style.top = top + 'px';
+  }
+  info.addEventListener('mouseenter', show);
+  info.addEventListener('mouseleave', hide);
+  info.addEventListener('focus', show);
+  info.addEventListener('blur', hide);
+}
+function bindSearchToggle() {
+  let t = document.querySelector('#searchToggle'),
+    s = document.querySelector('#search');
+  if (!t || !s || t.dataset.bound) return;
+  t.dataset.bound = '1';
+  t.onclick = () => {
+    let hidden = !s.classList.contains('search-hidden');
+    s.classList.toggle('search-hidden', hidden);
+    if (!hidden) s.focus();
+  };
+}
 async function startup() {
-  applyTheme(document.documentElement.getAttribute('data-theme') || 'dark');
+  applyTheme(document.documentElement.getAttribute('data-theme') || 'light');
+  bindCollectionHint();
+  bindSearchToggle();
   await loadPrefs();
   await loadState();
   while (!stateData.startup_done && !stateData.connected) {

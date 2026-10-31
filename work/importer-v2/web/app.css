@@ -159,9 +159,13 @@ button.warn {
 }
 .layout {
   display: grid;
-  grid-template-columns: 260px minmax(500px, 1fr);
+  grid-template-columns: 300px minmax(500px, 1fr);
   gap: 12px;
+  column-gap: 4px;
   align-items: start;
+}
+.layout > .panel {
+  margin-top: 0;
 }
 .panel.sticky {
   position: sticky;
@@ -338,6 +342,13 @@ td small {
     top: 10px;
     width: calc(100vw - 20px);
   }
+  #themeSwitcher {
+    right: 10px;
+    top: 10px;
+  }
+  .top {
+    padding-right: 60px;
+  }
 }
 .top-right {
   display: flex;
@@ -418,19 +429,60 @@ tr.dragging {
   opacity: 0.45;
 }
 .collection-row.drop-target {
-  background: var(--box-hover);
-  outline: 2px dashed var(--blue);
+  background: rgba(74, 137, 176, 0.16);
+  outline: 2px dashed #61b8e8;
   outline-offset: -2px;
   border-radius: 6px;
 }
-.collection-row {
-  display: flex;
-  align-items: center;
+.tree .collection-row {
+  display: flex !important;
+  align-items: center !important;
+  gap: 2px !important;
+  min-height: 36px !important;
+  width: 100% !important;
+  position: relative !important;
+  border-radius: 6px !important;
+  transition:
+    transform 0.15s ease,
+    background-color 0.15s ease,
+    box-shadow 0.15s ease !important;
+}
+.tree .collection-row > button:first-child {
+  width: auto !important;
+  min-width: 0 !important;
+  flex: 1 1 auto !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  max-height: 36px !important;
+  padding: 7px 8px !important;
+  line-height: 20px !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  text-align: left !important;
 }
 .tree .collection-row > .move {
-  width: 26px;
-  flex: 0 0 26px;
-  padding: 6px 2px;
+  width: 28px !important;
+  min-width: 28px !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  max-height: 36px !important;
+  flex: 0 0 28px !important;
+  padding: 7px 2px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+  line-height: 20px !important;
+}
+.tree .collection-row:hover {
+  transform: translateY(-1px) !important;
+  background-color: rgba(74, 137, 176, 0.16) !important;
+  box-shadow: 0 2px 7px rgba(12, 35, 52, 0.16) !important;
+}
+.tree .collection-row:hover > button {
+  transform: none !important;
+  background-color: transparent !important;
 }
 .history-row {
   display: flex;
@@ -455,5 +507,191 @@ input[type='checkbox'] {
 .view-switch {
   display: flex;
   gap: 8px;
-  margin: 10px 0;
+  margin: 8px 0 12px;
+}
+
+/* ---- codex 布局移植：导航 / 主题按钮 / 弹窗 / 标题栏 / 筛选列 ---- */
+.codex-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.codex-nav button:last-child {
+  margin-left: auto;
+}
+#themeSwitcher {
+  position: fixed;
+  z-index: 2147483647;
+  right: 18px;
+  top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.theme-toggle {
+  width: 36px;
+  height: 34px;
+  padding: 0;
+  margin: 0;
+  border: 1px solid #526b80;
+  border-radius: 10px;
+  background: rgba(19, 31, 43, 0.94);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  font-size: 18px;
+  line-height: 30px;
+}
+html[data-theme='light'] .theme-toggle {
+  background: rgba(255, 255, 255, 0.96);
+  border-color: #b9cad8;
+  box-shadow: 0 8px 24px rgba(44, 67, 87, 0.16);
+}
+#diagnosticsDialog {
+  width: min(760px, calc(100vw - 40px));
+  max-height: 80vh;
+  overflow: auto;
+  border: 1px solid #52738c;
+  border-radius: 12px;
+  padding: 20px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 16px 50px rgba(0, 0, 0, 0.4);
+}
+#diagnosticsDialog::backdrop {
+  background: rgba(4, 12, 20, 0.58);
+}
+#diagnosticsDialog .dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+#diagnosticsDialog .dialog-head h2 {
+  margin: 0;
+}
+.codex-main-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  min-height: 34px;
+  flex-wrap: nowrap;
+}
+.codex-main-heading > h2 {
+  margin: 0;
+  line-height: 1.25;
+}
+.codex-main-heading > #selectionCount {
+  margin-right: auto;
+  white-space: nowrap;
+}
+#collectionHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  min-height: 34px;
+}
+#collectionHead h2 {
+  margin: 0;
+  line-height: 1.25;
+}
+#collectionHead > button {
+  margin: 0 0 0 auto;
+}
+#collectionHint {
+  position: relative;
+  z-index: 10;
+  color: #8ecdf2;
+  cursor: help;
+  font-size: 15px;
+  line-height: 1;
+}
+html[data-theme='light'] #collectionHint {
+  color: #1f7cc0;
+}
+#collectionTooltip {
+  position: fixed;
+  z-index: 2147483647;
+  max-width: min(320px, calc(100vw - 24px));
+  padding: 9px 11px;
+  border: 1px solid #52738c;
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  white-space: normal;
+  pointer-events: none;
+}
+#filterColumn {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  margin: 0 0 12px;
+  min-height: 34px;
+}
+#filterColumn > #search {
+  flex: 0 1 320px;
+  width: 320px;
+  max-width: 42%;
+  min-width: 150px;
+  margin: 0;
+}
+#filterColumn > #search.search-hidden {
+  display: none !important;
+}
+#filterColumn > #gameSort {
+  flex: 0 0 150px;
+  width: 150px;
+  margin: 0;
+}
+#filterColumn > #searchToggle {
+  flex: 0 0 auto;
+  margin: 0;
+  white-space: nowrap;
+}
+.table-wrap table {
+  table-layout: fixed;
+  min-width: 980px;
+}
+.table-wrap th:nth-child(1),
+.table-wrap td:nth-child(1) {
+  width: 48px;
+}
+.table-wrap th:nth-child(2),
+.table-wrap td:nth-child(2) {
+  width: 220px;
+  max-width: 220px;
+}
+.table-wrap th:nth-child(3),
+.table-wrap td:nth-child(3) {
+  width: 235px;
+  max-width: 235px;
+  white-space: pre-line;
+}
+.table-wrap th:nth-child(4),
+.table-wrap td:nth-child(4) {
+  width: 110px;
+}
+.table-wrap th:nth-child(5),
+.table-wrap td:nth-child(5) {
+  width: 110px;
+  white-space: nowrap;
+}
+.table-wrap th:nth-child(6),
+.table-wrap td:nth-child(6) {
+  width: 90px;
+}
+.table-wrap th:nth-child(7),
+.table-wrap td:nth-child(7) {
+  width: 100px;
+}
+.table-wrap th:nth-child(8),
+.table-wrap td:nth-child(8) {
+  width: 80px;
 }

@@ -6,8 +6,10 @@
     <title>Steam 收藏整理</title>
     <script>
       try {
-        var __t = localStorage.getItem("sci-theme");
-        if (__t) document.documentElement.setAttribute("data-theme", __t);
+        document.documentElement.setAttribute(
+          'data-theme',
+          localStorage.getItem('steam-collection-importer-theme') || 'light',
+        );
       } catch (e) {}
     </script>
     <style>
@@ -19,60 +21,51 @@
       <div class="top">
         <div>
           <h1>Steam 收藏整理</h1>
-          <div class="subtle">
-            按收藏浏览和编辑 · 价格来自中国区 Steam 商店 · 规则 JSON
-            仅用于导入/导出
-          </div>
         </div>
         <div class="top-right">
-          <button
-            id="themeToggle"
-            class="secondary theme-toggle"
-            onclick="toggleTheme()"
-            title="切换白天/黑夜模式"
-            aria-label="切换白天/黑夜模式"
-          >
-            🌙
-          </button>
           <div id="status" class="status">正在读取 Steam…</div>
         </div>
       </div>
-      <div class="toolbar">
+      <div id="themeSwitcher">
+        <button
+          id="themeToggle"
+          class="theme-toggle"
+          onclick="toggleTheme()"
+          title="切换白天/黑夜模式"
+          aria-label="切换白天/黑夜模式"
+        >
+          🌙
+        </button>
+      </div>
+      <div class="toolbar codex-nav">
         <button onclick="showTab('library')" class="secondary">游戏库</button
-        ><button onclick="showTab('history')" class="secondary">
-          历史 / 导入导出</button
+        ><button onclick="showTab('history')" class="secondary">历史</button
         ><button onclick="diagnostics()" class="connection-action">
           连接诊断</button
-        ><button onclick="restartSteam()" class="secondary connection-action">
-          准备连接 Steam</button
-        ><button onclick="connect()" class="connection-action">
-          重新读取 Steam</button
-        ><button onclick="preview()">生成预览</button
-        ><button onclick="apply()" class="warn">确认保存到 Steam</button
-        ><button
-          onclick="toggleAI()"
-          class="secondary"
-          title="打开或收起 AI 整理面板"
-        >
-          ✨ AI 整理</button
+        ><button onclick="refreshList()" class="secondary connection-action">
+          刷新列表</button
         ><button onclick="quitTool()" class="secondary">退出工具</button>
       </div>
       <section id="diagnosticsPanel" class="panel hidden">
         <h2>连接诊断</h2>
         <div id="diagnosticsResult"></div>
       </section>
+      <dialog id="diagnosticsDialog">
+        <div class="dialog-head">
+          <h2>连接诊断</h2>
+          <button
+            type="button"
+            class="secondary"
+            onclick="document.querySelector('#diagnosticsDialog').close()"
+          >
+            关闭
+          </button>
+        </div>
+        <div id="diagnosticsDialogContent"><p>正在等待诊断结果…</p></div>
+      </dialog>
       <div id="libraryView">
         <div class="layout">
           <aside class="panel sticky">
-            <h2>收藏</h2>
-            <div class="note">
-              动态收藏由你在 Steam
-              中创建和维护。程序只读取它们来计算重叠，不会自动创建、改名或修改动态规则。
-            </div>
-            <div id="dynamicTree" class="tree"></div>
-            <div id="staticTree" class="tree"></div>
-          </aside>
-          <section class="panel">
             <div class="view-switch">
               <button
                 class="secondary"
@@ -82,7 +75,7 @@
                   renderAll();
                 "
               >
-                Steam 当前收藏</button
+                当前收藏</button
               ><button
                 class="secondary"
                 onclick="
@@ -91,73 +84,84 @@
                   renderAll();
                 "
               >
-                待保存方案
+                待保存
               </button>
             </div>
-            <div
-              class="toolbar"
-              style="padding: 0; border: 0; background: none"
-            >
-              <div style="flex: 1">
-                <h2 id="collectionTitle">全部游戏</h2>
-                <div id="collectionMeta" class="subtle"></div>
-              </div>
-              <button onclick="refreshPrices()" class="secondary">
-                获取商店资料和价格
-              </button>
+            <div id="collectionHead">
+              <h2>收藏</h2>
+              <span
+                id="collectionHint"
+                tabindex="0"
+                role="note"
+                aria-label="动态收藏由你在 Steam 中创建和维护，程序只读取它们来计算重叠，不会自动创建、改名或修改动态规则。"
+                >ⓘ</span
+              ><button onclick="apply()" class="warn">确认保存收藏</button>
             </div>
-            <div class="toolbar">
-              <input
-                id="bulkTarget"
-                list="bulkTargets"
-                placeholder="输入或选择目标静态收藏"
-              /><datalist id="bulkTargets"></datalist
-              ><button onclick="applySelectedTarget()">应用到勾选游戏</button
-              ><button onclick="togglePageSelection()" class="secondary">
-                勾选本页</button
-              ><button
-                onclick="
-                  checkedGames.clear();
-                  renderGames();
-                "
+            <div id="dynamicTree" class="tree"></div>
+            <div id="staticTree" class="tree"></div>
+          </aside>
+          <section class="panel">
+            <div class="toolbar codex-main-heading">
+              <h2 id="collectionTitle">全部游戏</h2>
+              <button
+                onclick="toggleAI()"
+                id="aiToggle"
                 class="secondary"
+                title="打开或收起 AI 整理面板"
               >
-                清空勾选</button
-              ><button onclick="previewRemoval()" class="warn">
-                移除选中的免费游戏</button
-              ><span id="selectionCount" class="subtle"></span>
+                ✨ AI 整理</button
+              ><span id="selectionCount" class="subtle"
+                >已选 0 款（跨页保留）</span
+              ><button
+                onclick="previewRemoval()"
+                class="warn"
+                title="仅可移除中国区当前免费、之后仍可重新获取且没有游玩记录的游戏；工具会在执行前再次核验。"
+                aria-label="仅可移除中国区当前免费、之后仍可重新获取且没有游玩记录的游戏；工具会在执行前再次核验。"
+              >
+                移除游戏</button
+              ><button onclick="refreshPrices()" class="secondary">
+                获取商店资料和价格</button
+              ><span id="collectionMeta" class="subtle" hidden></span>
             </div>
-            <div class="toolbar">
-              <select
-                id="publisherFilter"
-                style="flex: 1"
-                onchange="
+            <div id="filterColumn">
+              <input
+                id="search"
+                placeholder="搜索名称、AppID 或厂商"
+                oninput="
                   pageNo = 0;
                   renderGames();
                 "
+              /><button
+                id="searchToggle"
+                type="button"
+                class="secondary"
+                title="显示或隐藏搜索框"
               >
-                <option value="">全部发行厂商</option></select
+                🔍 搜索</button
               ><select
                 id="gameSort"
-                style="flex: 1"
                 onchange="
                   pageNo = 0;
                   renderGames();
                 "
               >
                 <option value="name">按名称</option>
-                <option value="recent">按最后游玩</option>
-                <option value="playtime">按游玩时长</option>
               </select>
             </div>
-            <input
-              id="search"
-              placeholder="搜索名称、AppID 或厂商"
-              oninput="
+            <select
+              id="publisherFilter"
+              hidden
+              onchange="
                 pageNo = 0;
                 renderGames();
               "
-            />
+            ></select>
+            <input
+              id="bulkTarget"
+              list="bulkTargets"
+              hidden
+              placeholder="输入或选择目标静态收藏"
+            /><datalist id="bulkTargets"></datalist>
             <div class="table-wrap">
               <table>
                 <thead>
@@ -211,7 +215,7 @@
             <div id="priceInfo" class="subtle"></div>
           </details>
         </div>
-        <section class="panel">
+        <section class="panel hidden">
           <h2>预览和执行日志</h2>
           <div id="preview">尚未预览</div>
         </section>
