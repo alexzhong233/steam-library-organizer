@@ -54,6 +54,7 @@ const KEY='steam-collection-importer-theme';
 function saveSettings(p){fetch('/api/ui-settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}).catch(function(){})}
 function setTheme(v){v=v==='dark'?'dark':'light';document.documentElement.dataset.theme=v;localStorage.setItem(KEY,v);var b=document.getElementById('codex-theme-toggle');if(b){b.textContent=v==='dark'?'☀️':'🌙';b.title=v==='dark'?'切换到白天模式':'切换到黑夜模式';b.setAttribute('aria-label',b.title)}saveSettings({theme:v})}
 function setup(){
+  var metaGuard=document.getElementById('collectionMeta');if(!metaGuard){metaGuard=document.createElement('span');metaGuard.id='collectionMeta';metaGuard.style.display='none';document.body.appendChild(metaGuard)}
   var saved=localStorage.getItem(KEY)||'light';
   var wrap=document.createElement('div');wrap.id='codex-theme-switcher';var tb=document.createElement('button');tb.id='codex-theme-toggle';tb.onclick=function(){setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark')};wrap.appendChild(tb);document.body.appendChild(wrap);setTheme(saved);
   var first=document.querySelector('main > .toolbar');
