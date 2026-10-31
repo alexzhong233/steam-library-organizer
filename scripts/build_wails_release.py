@@ -41,7 +41,7 @@ def main() -> int:
             stream.reconfigure(encoding="utf-8", errors="replace")
 
     parser = argparse.ArgumentParser(description="构建 Wails 系统 WebView 版 Steam 收藏整理工具")
-    parser.add_argument("--platform", choices=["darwin/arm64", "windows/amd64", "windows/arm64"], default="darwin/arm64")
+    parser.add_argument("--platform", choices=["darwin/arm64", "darwin/amd64", "windows/amd64", "windows/arm64"], default="darwin/arm64")
     parser.add_argument("--core", type=Path, help="对应平台的 SteamCollectionImporterCore")
     parser.add_argument("--install", action="store_true", help="macOS 构建后复制到 /Applications")
     args = parser.parse_args()
@@ -51,9 +51,12 @@ def main() -> int:
         raise SystemExit("找不到 wails，请安装 Wails v2.10 或更新版本")
     core = find_core(args.core)
     project = ROOT / "desktop-wails"
-    run([str(wails), "build", "-clean", "-platform", args.platform, "-o", APP_NAME], project)
-
     os_name, arch = args.platform.split("/", 1)
+    # Windows 必须显式带 .exe：wails 把 -o 原样交给 go build，而 go build 只在
+    # 没写 -o 时才自动补后缀，写 -o SteamCollectionImporter 出来就是无后缀文件。
+    output_name = f"{APP_NAME}.exe" if os_name == "windows" else APP_NAME
+    run([str(wails), "build", "-clean", "-platform", args.platform, "-o", output_name], project)
+
     output = project / "build/bin"
     if os_name == "darwin":
         app = output / f"{APP_NAME}.app"
@@ -71,12 +74,17 @@ def main() -> int:
             print("已安装：", target)
         print("App：", app)
     else:
-        exe = output / f"{APP_NAME}.exe"
+        exe = output / output_name
+        if not exe.is_file():
+            bare = output / APP_NAME
+            if bare.is_file():
+                bare.replace(exe)
         resources = output / "Resources"
         resources.mkdir(parents=True, exist_ok=True)
         shutil.copy2(core, resources / "SteamCollectionImporterCore.exe")
         if not exe.is_file():
-            raise SystemExit(f"wails 声称构建成功，但没有生成 {exe}")
+            found = sorted(p.name for p in output.iterdir()) if output.is_dir() else []
+            raise SystemExit(f"wails 声称构建成功，但没有生成 {exe}；build/bin 里只有 {found}")
         print("EXE：", exe)
     print("核心：", core)
     return 0
